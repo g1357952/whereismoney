@@ -240,6 +240,84 @@
     let unsubscribeCategories = null;
     let unsubscribeTemplates = null;
 
+    // NEW: Cloud Error Diagnostic Handler
+    function handleCloudError(context, error) {
+        console.error(`Cloud Error [${context}]:`, error);
+        
+        const modal = document.getElementById('cloud-error-modal');
+        const contextEl = document.getElementById('diagnostic-context');
+        const codeEl = document.getElementById('diagnostic-code');
+        const msgEl = document.getElementById('diagnostic-message');
+        const solutionEl = document.getElementById('diagnostic-solution');
+
+        if (!modal || !contextEl || !codeEl || !msgEl || !solutionEl) {
+            showToast(`雲端同步錯誤: ${error.message || error}`, 'danger');
+            return;
+        }
+
+        contextEl.innerText = context;
+        codeEl.innerText = error.code || 'unknown';
+        msgEl.innerText = error.message || error;
+
+        let solutionHtml = '';
+        const code = (error.code || '').toLowerCase();
+
+        if (code === 'permission-denied') {
+            solutionHtml = `
+                <p class="font-bold text-slate-800 text-[13px] mb-1">💡 排除方法：安全規則 (Rules) 未開放</p>
+                <p>您的 Firestore 拒絕了讀寫請求。請依照以下步驟開放權限：</p>
+                <ol class="list-decimal pl-4 mt-1.5 space-y-1">
+                    <li>前往您的 <b>Firebase 後台</b> -> 進入 <b>Firestore Database</b>。</li>
+                    <li>點選上方的 <b>「Rules」(規則)</b> 分頁。</li>
+                    <li>將裡面的內容修改為允許所有人讀寫：</li>
+                </ol>
+                <pre class="bg-white/80 p-2 rounded-lg font-mono text-[9px] mt-2 border border-amber-200 overflow-x-auto text-slate-700">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}</pre>
+                <p class="mt-2 text-[10px] text-amber-900 font-bold">⚠️ 貼上後，務必點擊右上角的「Publish」(發布) 才能生效！</p>
+            `;
+        } else if (code === 'unauthenticated' || error.message.includes('auth')) {
+            solutionHtml = `
+                <p class="font-bold text-slate-800 text-[13px] mb-1">💡 排除方法：未啟用「匿名登入」</p>
+                <p>由於您的安全規則可能需要驗證，但您尚未啟用匿名登入服務：</p>
+                <ol class="list-decimal pl-4 mt-1.5 space-y-1">
+                    <li>前往 <b>Firebase 後台</b> -> 進入 <b>Authentication</b>。</li>
+                    <li>點選 <b>Sign-in method</b> (登入方式)。</li>
+                    <li>在下方供應商找到 <b>「匿名 (Anonymous)」</b>。</li>
+                    <li>點進去開啟 <b>「啟用」</b> 並儲存。</li>
+                </ol>
+            `;
+        } else if (error.message.includes('database') || error.message.includes('not found')) {
+            solutionHtml = `
+                <p class="font-bold text-slate-800 text-[13px] mb-1">💡 排除方法：尚未建立 Firestore 資料庫</p>
+                <p>您的專案設定正確，但您似乎還沒有在後台初始化資料庫：</p>
+                <ol class="list-decimal pl-4 mt-1.5 space-y-1">
+                    <li>前往 <b>Firebase 後台</b> -> 點擊左側 <b>Firestore Database</b>。</li>
+                    <li>點擊中央的 <b>「建立資料庫 (Create database)」</b>。</li>
+                    <li>地點選擇靠近台灣的區域（如 asia-east1），並以測試模式啟動。</li>
+                </ol>
+            `;
+        } else {
+            solutionHtml = `
+                <p class="font-bold text-slate-800 text-[13px] mb-1">💡 排除方法：網路或連線代碼不正確</p>
+                <p>請確認以下幾點：</p>
+                <ul class="list-disc pl-4 mt-1 space-y-1">
+                    <li>請確認您的行動裝置網路連線是否正常。</li>
+                    <li>請確認貼上的 <b>Firebase Config JSON</b> 與您在 Firebase 後台複製的完全一致，且沒有漏掉大括號。</li>
+                    <li>可以嘗試更換「同步共享代碼」重新載入。</li>
+                </ul>
+            `;
+        }
+
+        solutionEl.innerHTML = solutionHtml;
+        modal.classList.remove('hidden');
+    }
+
     function setupFirestoreListeners() {
         if (!isFirebaseReady) return;
         if (!auth || !auth.currentUser) {
@@ -267,9 +345,8 @@
             renderApp();
             showLoading(false);
         }, (error) => {
-            console.error("Records sync error:", error);
-            showToast("載入雲端資料錯誤，請重新整理", "danger");
             showLoading(false);
+            handleCloudError("載入帳目紀錄", error);
         });
 
         unsubscribeCategories = onSnapshot(categoriesCol, (snapshot) => {
@@ -284,7 +361,9 @@
                 saveLocalData();
                 renderApp();
             }
-        }, (error) => console.error("Categories sync error:", error));
+        }, (error) => {
+            handleCloudError("載入消費分類", error);
+        });
 
         unsubscribeTemplates = onSnapshot(templatesCol, (snapshot) => {
             const list = [];
@@ -295,7 +374,9 @@
             }
             saveLocalData();
             renderApp();
-        }, (error) => console.error("Templates sync error:", error));
+        }, (error) => {
+            handleCloudError("載入常用快捷", error);
+        });
     }
 
     async function initializeCloudDefaults() {
