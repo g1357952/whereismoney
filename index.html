@@ -201,7 +201,8 @@
         { id: 'c14', account: 'rabbit', type: 'expense', name: '起粑美容剃毛', icon: 'fa-scissors', color: '#ec4899' },
         { id: 'c15', account: 'rabbit', type: 'expense', name: '起粑用品玩具', icon: 'fa-bone', color: '#14b8a6' },
         { id: 'c16', account: 'rabbit', type: 'expense', name: '起粑寄宿託管', icon: 'fa-hotel', color: '#8b5cf6' },
-        { id: 'c17', account: 'rabbit', type: 'expense', name: '起粑其他雜支', icon: 'fa-ellipsis', color: '#64748b' }
+        { id: 'c17', account: 'rabbit', type: 'expense', name: '起粑其他雜支', icon: 'fa-ellipsis', color: '#64748b' },
+        { id: 'c18', account: 'rabbit', type: 'income', name: '起粑基金', icon: 'fa-coins', color: '#10b981' }
     ];
 
     const defaultTemplates = [
@@ -217,6 +218,11 @@
             state.categories = defaultCategories;
         } else {
             state.categories = localCategories;
+            const hasRabbitIncome = state.categories.some(c => c.account === 'rabbit' && c.type === 'income');
+            if (!hasRabbitIncome) {
+                state.categories.push({ id: 'c18', account: 'rabbit', type: 'income', name: '起粑基金', icon: 'fa-coins', color: '#10b981' });
+                localStorage.setItem('ledger_categories', JSON.stringify(state.categories));
+            }
         }
 
         if (!localStorage.getItem('ledger_templates')) {
@@ -371,6 +377,19 @@ service cloud.firestore {
                 initializeCloudDefaults();
             } else {
                 state.categories = filtered;
+                
+                const hasRabbitIncome = state.categories.some(c => c.account === 'rabbit' && c.type === 'income');
+                if (!hasRabbitIncome && isFirebaseReady && auth.currentUser) {
+                    addDoc(categoriesCol, {
+                        bookId: state.syncCode,
+                        account: 'rabbit',
+                        type: 'income',
+                        name: '起粑基金',
+                        icon: 'fa-coins',
+                        color: '#10b981'
+                    }).catch(err => console.error("Auto-syncing 起粑基金 category failed:", err));
+                }
+
                 saveLocalData();
                 renderApp();
             }
