@@ -76,16 +76,18 @@
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    // Firebase Global Variables
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'shared-ledger-2026';
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+    // GitHub / EZPage Custom Firebase Database Support
+    const storedConfig = localStorage.getItem('custom_firebase_config');
+    const firebaseConfig = storedConfig ? JSON.parse(storedConfig) : (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
         apiKey: "",
         authDomain: "mock-auth-domain.firebaseapp.com",
         projectId: "mock-project-id",
         storageBucket: "mock-storage-bucket.appspot.com",
         messagingSenderId: "123456789",
         appId: "1:123456789:web:123456"
-    };
+    });
+
+    const appId = typeof __app_id !== 'undefined' ? __app_id : (localStorage.getItem('custom_app_id') || 'shared-ledger-2026');
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
     let app, db, auth;
@@ -97,26 +99,42 @@
     let localTemplates = JSON.parse(localStorage.getItem('ledger_templates') || '[]');
 
     async function initFirebase() {
+        // If config is dummy/empty, skip to local fallback mode
+        if (!firebaseConfig || !firebaseConfig.apiKey) {
+            console.warn("No active Firebase config found. Running in local-first mode.");
+            isFirebaseReady = false;
+            loadLocalData();
+            updateDatabaseStatusPill();
+            return;
+        }
+
         try {
             app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             auth = getAuth(app);
 
-            // Auth Priority: Custom Token -> Anonymous Auth
+            // Auth Priority: Custom Token -> Anonymous Auth (Rule 3)
+            let userCredential;
             if (initialAuthToken) {
-                await signInWithCustomToken(auth, initialAuthToken);
+                userCredential = await signInWithCustomToken(auth, initialAuthToken);
             } else {
-                await signInAnonymously(auth);
+                userCredential = await signInAnonymously(auth);
             }
-            isFirebaseReady = true;
-            showToast('雲端資料庫連線成功！資料已同步。', 'success');
-            setupFirestoreListeners();
+
+            if (userCredential && userCredential.user) {
+                isFirebaseReady = true;
+                showToast('雲端資料庫連線成功！資料已同步。', 'success');
+                setupFirestoreListeners();
+            } else {
+                throw new Error("Authentication failed");
+            }
         } catch (error) {
             console.warn("Firebase Init failed, running in local-first mode:", error);
             isFirebaseReady = false;
             showToast('雲端連線失敗，目前為離線本機模式。', 'warning');
             loadLocalData();
         }
+        updateDatabaseStatusPill();
     }
 
     window.addEventListener('load', () => {
@@ -208,18 +226,24 @@
 
     function setupFirestoreListeners() {
         if (!isFirebaseReady) return;
+        // Guard checking authentication state before querying (Rule 3)
+        if (!auth || !auth.currentUser) {
+            console.warn("Authorization not verified yet. Postponing real-time synchronization.");
+            return;
+        }
 
-        // Clean existing listeners if any
         if (unsubscribeRecords) unsubscribeRecords();
         if (unsubscribeCategories) unsubscribeCategories();
         if (unsubscribeTemplates) unsubscribeTemplates();
 
         showLoading(true);
 
+        // Strict Paths (Rule 1)
         const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'records');
         const categoriesCol = collection(db, 'artifacts', appId, 'public', 'data', 'categories');
         const templatesCol = collection(db, 'artifacts', appId, 'public', 'data', 'templates');
 
+        // Rule 2: Fetch all matching synchronization data without complex filters, handle in memory
         unsubscribeRecords = onSnapshot(recordsCol, (snapshot) => {
             const allRecords = [];
             snapshot.forEach(doc => {
@@ -262,7 +286,7 @@
     }
 
     async function initializeCloudDefaults() {
-        if (!isFirebaseReady) return;
+        if (!isFirebaseReady || !auth.currentUser) return;
         try {
             const categoriesCol = collection(db, 'artifacts', appId, 'public', 'data', 'categories');
             for (let cat of defaultCategories) {
@@ -293,6 +317,13 @@
         const partnerInput = document.getElementById('partner-name-input');
         if (partnerInput) partnerInput.value = state.partnerUser;
 
+        // Populate Custom Database fields on load
+        const storedConfigText = localStorage.getItem('custom_firebase_config');
+        if (storedConfigText) {
+            document.getElementById('custom-firebase-json').value = JSON.stringify(JSON.parse(storedConfigText), null, 2);
+        }
+        document.getElementById('custom-app-id-input').value = localStorage.getItem('custom_app_id') || 'shared-ledger-2026';
+
         // View event listeners for bottom/top navigation
         document.querySelectorAll('.nav-tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
@@ -312,6 +343,23 @@
 
         loadLocalData();
         renderAiChatHistory();
+    }
+
+    function updateDatabaseStatusPill() {
+        const badge = document.getElementById('header-sync-badge');
+        if (!badge) return;
+
+        let statusText = '';
+        let icon = '';
+        if (isFirebaseReady) {
+            const isCustom = localStorage.getItem('custom_firebase_config') !== null;
+            statusText = isCustom ? `自訂雲端同步中 (${state.syncCode})` : `預設雲端同步中 (${state.syncCode})`;
+            icon = '<i class="fa-solid fa-cloud-bolt text-emerald-500 animate-pulse"></i>';
+        } else {
+            statusText = `本地單機模式 (${state.syncCode})`;
+            icon = '<i class="fa-solid fa-triangle-exclamation text-amber-500"></i>';
+        }
+        badge.innerHTML = `${icon} <span class="text-[10px] text-slate-500 font-semibold">${statusText}</span>`;
     }
 
     function switchView(viewName) {
@@ -766,6 +814,11 @@
                 showLoading(true);
                 try {
                     if (isFirebaseReady) {
+                        // Guard with Auth Check before query (Rule 3)
+                        if (!auth || !auth.currentUser) {
+                            showToast('未登入或連線不穩定，無法刪除明細！', 'danger');
+                            return;
+                        }
                         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', id);
                         await deleteDoc(docRef);
                     } else {
@@ -1053,6 +1106,11 @@
         try {
             if (state.editId) {
                 if (isFirebaseReady) {
+                    // Guard with Auth Check before query (Rule 3)
+                    if (!auth || !auth.currentUser) {
+                        showToast('連線中斷，請稍後重試。', 'danger');
+                        return;
+                    }
                     const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', state.editId);
                     await updateDoc(docRef, recordPayload);
                 } else {
@@ -1067,6 +1125,11 @@
                 recordPayload.createdAt = Date.now();
 
                 if (isFirebaseReady) {
+                    // Guard with Auth Check before query (Rule 3)
+                    if (!auth || !auth.currentUser) {
+                        showToast('連線中斷，請稍後重試。', 'danger');
+                        return;
+                    }
                     const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'records');
                     await addDoc(recordsCol, recordPayload);
                 } else {
@@ -1506,6 +1569,11 @@
 
         try {
             if (isFirebaseReady) {
+                // Guard check before firestore (Rule 3)
+                if (!auth || !auth.currentUser) {
+                    showToast('未驗證使用者，無法上傳分類！', 'danger');
+                    return;
+                }
                 const categoriesCol = collection(db, 'artifacts', appId, 'public', 'data', 'categories');
                 await addDoc(categoriesCol, payload);
             } else {
@@ -1536,6 +1604,11 @@
                 showLoading(true);
                 try {
                     if (isFirebaseReady) {
+                        // Guard check before firestore (Rule 3)
+                        if (!auth || !auth.currentUser) {
+                            showToast('未驗證，無法執行此操作！', 'danger');
+                            return;
+                        }
                         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'categories', id);
                         await deleteDoc(docRef);
                     } else {
@@ -1619,6 +1692,48 @@
         }
     };
 
+    window.saveCustomFirebaseConfig = function() {
+        const jsonStr = document.getElementById('custom-firebase-json').value.trim();
+        const customAppId = document.getElementById('custom-app-id-input').value.trim();
+
+        if (!jsonStr) {
+            showToast('請先輸入或貼上有效的 Firebase Config JSON！', 'danger');
+            return;
+        }
+
+        try {
+            const parsedConfig = JSON.parse(jsonStr);
+            if (!parsedConfig.apiKey || !parsedConfig.projectId) {
+                showToast('無效的 Firebase JSON（必須包含 apiKey 與 projectId）', 'danger');
+                return;
+            }
+
+            localStorage.setItem('custom_firebase_config', JSON.stringify(parsedConfig));
+            if (customAppId) {
+                localStorage.setItem('custom_app_id', customAppId);
+            } else {
+                localStorage.removeItem('custom_app_id');
+            }
+
+            showToast('自訂資料庫設定成功！頁面即將重新整理以建立雲端連線...', 'success');
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+
+        } catch (e) {
+            showToast('JSON 格式錯誤，請確認貼上的是完整的物件結構。', 'danger');
+        }
+    };
+
+    window.clearCustomFirebaseConfig = function() {
+        localStorage.removeItem('custom_firebase_config');
+        localStorage.removeItem('custom_app_id');
+        showToast('已重設為系統預設值，網頁即將重新整理...', 'info');
+        setTimeout(() => {
+            location.reload();
+        }, 1500);
+    };
+
     window.openAddTemplateModal = function() {
         document.getElementById('temp-modal-title').value = '';
         document.getElementById('temp-modal-amount').value = '';
@@ -1666,6 +1781,11 @@
 
         try {
             if (isFirebaseReady) {
+                // Guard checking before firestore (Rule 3)
+                if (!auth || !auth.currentUser) {
+                    showToast('未驗證使用者，上傳常用項目失敗！', 'danger');
+                    return;
+                }
                 const templatesCol = collection(db, 'artifacts', appId, 'public', 'data', 'templates');
                 await addDoc(templatesCol, payload);
             } else {
@@ -1693,6 +1813,11 @@
                 showLoading(true);
                 try {
                     if (isFirebaseReady) {
+                        // Guard checking before firestore (Rule 3)
+                        if (!auth || !auth.currentUser) {
+                            showToast('未驗證使用者，無法刪除！', 'danger');
+                            return;
+                        }
                         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'templates', id);
                         await deleteDoc(docRef);
                     } else {
@@ -1952,9 +2077,7 @@
     };
 
     function renderApp() {
-        document.getElementById('header-sync-badge').innerHTML = `
-            <i class="fa-solid fa-users text-xs"></i> <span>同步代碼: ${state.syncCode}</span>
-        `;
+        updateDatabaseStatusPill();
         
         if (state.currentView === 'home') {
             renderHomeView();
@@ -2442,6 +2565,41 @@
 
     <!-- VIEW 6: SETTINGS, COLLABORATION, BACKUPS -->
     <section id="view-settings" class="app-view space-y-5 hidden max-w-xl mx-auto">
+        <!-- New Database Connectivity Custom Card for EZPage and Github -->
+        <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
+            <h3 class="text-sm font-extrabold text-slate-800 flex items-center gap-1.5">
+                <i class="fa-solid fa-network-wired text-brand-living"></i> GitHub / EZPage 雲端資料庫設定
+            </h3>
+            <p class="text-xs text-slate-500 leading-relaxed">
+                如果您要在 <strong>GitHub Pages</strong>、<strong>EZPage</strong> 獨立發布，請在這裡貼上您的 Firebase Config JSON。兩台裝置上貼上相同的設定並設定相同「同步碼」，即可實現多端即時資料連線！
+            </p>
+            <div class="space-y-3.5">
+                <div>
+                    <label class="block text-[11px] font-black text-slate-400 mb-1">Firebase Config JSON</label>
+                    <textarea id="custom-firebase-json" rows="6" placeholder='{
+  "apiKey": "AIzaSy...",
+  "authDomain": "...",
+  "projectId": "...",
+  "storageBucket": "...",
+  "messagingSenderId": "...",
+  "appId": "..."
+}' class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs font-mono focus:ring-1 focus:ring-brand-living outline-none resize-none"></textarea>
+                </div>
+                <div>
+                    <label class="block text-[11px] font-black text-slate-400 mb-1">自訂 App ID (預設: shared-ledger-2026)</label>
+                    <input type="text" id="custom-app-id-input" placeholder="shared-ledger-2026" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs focus:ring-1 focus:ring-brand-living outline-none">
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="saveCustomFirebaseConfig()" class="flex-1 bg-slate-800 hover:bg-slate-950 text-white py-2 rounded-xl text-xs font-black transition-colors">
+                        套用並連線
+                    </button>
+                    <button onclick="clearCustomFirebaseConfig()" class="bg-rose-50 hover:bg-rose-100 text-rose-600 px-4 py-2 rounded-xl text-xs font-bold transition-colors">
+                        還原預設
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
             <h2 class="text-base font-extrabold text-slate-800">帳本與成員設定</h2>
             
