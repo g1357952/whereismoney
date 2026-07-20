@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>雙兔生活記帳 🐾 兩人與起粑的智能帳本</title>
+    
+    <!-- iOS Web App (PWA) 專屬滿版宣告標籤 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="雙兔記帳">
+    
+    <!-- iOS 桌面 App 圖示 -->
+    <link rel="apple-touch-icon" href="https://placehold.co/180x180/0ea5e9/ffffff?text=🐾">
+
     <!-- Tailwind CSS for modern design -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome for high-quality icons -->
@@ -371,6 +380,7 @@ service cloud.firestore {
             } else {
                 state.categories = filtered;
                 
+                // Keep cloud categories self-healing
                 const hasRabbitIncome = state.categories.some(c => c.account === 'rabbit' && c.type === 'income');
                 if (!hasRabbitIncome && isFirebaseReady && auth.currentUser) {
                     addDoc(categoriesCol, {
