@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>雙人生活記帳 🐾 兩人與起粑的智能帳本</title>
     <!-- Tailwind CSS for modern design -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -62,7 +62,7 @@
         }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col pb-20 md:pb-0">
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col pb-32 md:pb-0">
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -217,7 +217,7 @@
             localStorage.setItem('ledger_categories', JSON.stringify(defaultCategories));
             state.categories = defaultCategories;
         } else {
-            state.categories = localCategories;
+            state.categories = JSON.parse(localStorage.getItem('ledger_categories'));
             const hasRabbitIncome = state.categories.some(c => c.account === 'rabbit' && c.type === 'income');
             if (!hasRabbitIncome) {
                 state.categories.push({ id: 'c18', account: 'rabbit', type: 'income', name: '起粑基金', icon: 'fa-coins', color: '#10b981' });
@@ -229,10 +229,10 @@
             localStorage.setItem('ledger_templates', JSON.stringify(defaultTemplates));
             state.templates = defaultTemplates;
         } else {
-            state.templates = localTemplates;
+            state.templates = JSON.parse(localStorage.getItem('ledger_templates'));
         }
 
-        state.records = localRecords;
+        state.records = JSON.parse(localStorage.getItem('ledger_records') || '[]');
         renderApp();
     }
 
@@ -246,13 +246,10 @@
     let unsubscribeCategories = null;
     let unsubscribeTemplates = null;
 
-    // NEW & IMPROVED: Bulletproof Cloud Error Diagnostic Handler with dynamic fallback
     function handleCloudError(context, error) {
         console.error(`Cloud Error [${context}]:`, error);
         
         let modal = document.getElementById('cloud-error-modal');
-        
-        // If the HTML element doesn't exist yet, build it dynamically via JavaScript!
         if (!modal) {
             modal = document.createElement('div');
             modal.id = 'cloud-error-modal';
@@ -274,7 +271,6 @@
                     </div>
 
                     <div id="diagnostic-solution" class="bg-amber-50 border border-amber-100 p-4 rounded-2xl text-xs text-amber-800 space-y-2 leading-relaxed text-left">
-                        <!-- Solutions inject dynamically -->
                     </div>
 
                     <div class="flex gap-2.5 pt-2">
@@ -288,6 +284,8 @@
                 </div>
             `;
             document.body.appendChild(modal);
+        } else {
+            modal.classList.remove('hidden');
         }
 
         const contextEl = document.getElementById('diagnostic-context');
@@ -457,14 +455,6 @@ service cloud.firestore {
             });
         });
 
-        const quickAddBtn = document.getElementById('quick-add-fab');
-        if (quickAddBtn) {
-            quickAddBtn.addEventListener('click', () => {
-                resetRecordForm();
-                switchView('add');
-            });
-        }
-
         loadLocalData();
         renderAiChatHistory();
     }
@@ -505,7 +495,13 @@ service cloud.firestore {
                 if (icon) icon.className = icon.className.replace('text-slate-400', 'text-brand-living font-bold');
                 if (text) text.className = "text-[11px] text-brand-living font-bold mt-0.5";
             } else {
-                if (icon) icon.className = icon.className.replace('text-brand-living font-bold', 'text-slate-400');
+                if (icon) {
+                    icon.className = icon.className.replace('text-brand-living font-bold', 'text-slate-400');
+                    // Add generic fallback
+                    if (!icon.className.includes('text-slate-400')) {
+                        icon.classList.add('text-slate-400');
+                    }
+                }
                 if (text) text.className = "text-[11px] text-slate-400 mt-0.5";
             }
         });
@@ -711,7 +707,7 @@ service cloud.firestore {
         if (!container) return;
 
         if (state.templates.length === 0) {
-            container.innerHTML = `<p class="text-slate-400 text-sm py-4 text-center">無常用項目，可在設定中新增！</p>`;
+            container.innerHTML = `<p class="text-slate-400 text-sm py-4 text-center w-full">無常用項目，可在設定中新增！</p>`;
             return;
         }
 
@@ -763,7 +759,7 @@ service cloud.firestore {
 
         if (recent.length === 0) {
             container.innerHTML = `
-                <div class="text-center py-8 bg-white rounded-2xl border border-slate-100">
+                <div class="text-center py-8 bg-white rounded-2xl border border-slate-100 w-full">
                     <img src="https://placehold.co/100x100/f8fafc/94a3b8?text=🐾" class="mx-auto rounded-full mb-3 opacity-60" alt="No records">
                     <p class="text-slate-400 text-sm">本月尚無任何收支紀錄</p>
                     <button onclick="switchView('add')" class="mt-3 text-xs bg-brand-living text-white px-4 py-2 rounded-lg font-bold">手刀新增第一筆</button>
@@ -795,7 +791,7 @@ service cloud.firestore {
         return `
             <div class="flex items-center justify-between p-3.5 bg-white rounded-xl border border-slate-100 hover:border-slate-200 hover:shadow-sm transition-all cursor-pointer" onclick="openRecordActionMenu('${r.id}')">
                 <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-full flex items-center justify-center text-white" style="background-color: ${colorClass}">
+                    <div class="w-10 h-10 rounded-full flex items-center justify-center text-white shrink-0" style="background-color: ${colorClass}">
                         <i class="fa-solid ${iconClass}"></i>
                     </div>
                     <div>
@@ -991,9 +987,9 @@ service cloud.firestore {
         
         const payerSelect = document.getElementById('rec-payer');
         payerSelect.innerHTML = `
-            <option value="共同分攤">👫 共同分攤</option>
-            <option value="${state.currentUser}">🙋 ${state.currentUser}</option>
-            <option value="${state.partnerUser}">🙋 ${state.partnerUser}</option>
+            <option value="共同分攤">共同分攤</option>
+            <option value="${state.currentUser}">${state.currentUser}</option>
+            <option value="${state.partnerUser}">${state.partnerUser}</option>
         `;
     }
 
@@ -1625,7 +1621,7 @@ service cloud.firestore {
         const mapper = (cat) => `
             <div class="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-100 shadow-sm">
                 <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 rounded-full flex items-center justify-center text-white" style="background-color: ${cat.color}">
+                    <div class="w-9 h-9 rounded-full flex items-center justify-center text-white shrink-0" style="background-color: ${cat.color}">
                         <i class="fa-solid ${cat.icon}"></i>
                     </div>
                     <span class="font-bold text-sm text-slate-800">${cat.name}</span>
@@ -1746,7 +1742,7 @@ service cloud.firestore {
         const templateContainer = document.getElementById('settings-templates-list');
         if (templateContainer) {
             if (state.templates.length === 0) {
-                templateContainer.innerHTML = `<p class="text-slate-400 text-xs py-2">目前沒有常用快捷鍵，請點按下方新增。</p>`;
+                templateContainer.innerHTML = `<p class="text-slate-400 text-xs py-2 w-full text-center">目前沒有常用快捷鍵，請點按下方新增。</p>`;
                 return;
             }
             templateContainer.innerHTML = state.templates.map(t => {
@@ -2224,7 +2220,7 @@ service cloud.firestore {
 
 <header class="bg-white shadow-sm border-b border-slate-100 sticky top-0 z-40 px-4 py-3 flex items-center justify-between">
     <div class="flex items-center gap-2">
-        <div class="w-10 h-10 bg-gradient-to-tr from-brand-living to-brand-rabbit rounded-xl flex items-center justify-center text-white shadow-md">
+        <div class="w-10 h-10 bg-gradient-to-tr from-brand-living to-brand-rabbit rounded-xl flex items-center justify-center text-white shadow-md shrink-0">
             <i class="fa-solid fa-paw text-lg animate-pulse"></i>
         </div>
         <div>
@@ -2264,7 +2260,7 @@ service cloud.firestore {
                     <p class="text-[10px] opacity-90 mt-0.5">點此詢問助理：自動診斷本月花費比例 & 提供起粑照護省錢妙招！</p>
                 </div>
             </div>
-            <i class="fa-solid fa-circle-chevron-right text-lg"></i>
+            <i class="fa-solid fa-circle-chevron-right text-lg shrink-0"></i>
         </div>
 
         <div class="flex items-center justify-between bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm">
@@ -2312,7 +2308,7 @@ service cloud.firestore {
 
             <div class="col-span-2 bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                    <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
                         <i class="fa-solid fa-hand-holding-dollar text-sm"></i>
                     </div>
                     <div>
@@ -2340,7 +2336,7 @@ service cloud.firestore {
                 </h3>
                 <span class="text-[10px] text-slate-400">點按立即帶入</span>
             </div>
-            <div id="quick-templates-container" class="flex gap-2 overflow-x-auto pb-1.5 hide-scrollbar"></div>
+            <div id="quick-templates-container" class="flex gap-2 overflow-x-auto pb-1.5 hide-scrollbar w-full"></div>
         </div>
 
         <div class="space-y-3">
@@ -2440,8 +2436,8 @@ service cloud.firestore {
             <div class="flex items-center justify-between">
                 <h2 id="form-title" class="text-base font-extrabold text-slate-800">新增收支明細</h2>
                 <!-- AI Receipt Parser Button -->
-                <button type="button" onclick="triggerAiReceiptParsing()" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-105 text-white px-3 py-2 rounded-xl text-[11px] font-black flex items-center gap-1.5 shadow-md cursor-pointer transition-all">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i> 🪄 AI 辨識發票/收據
+                <button type="button" onclick="triggerAiReceiptParsing()" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-105 text-white px-3 py-2 rounded-xl text-[11px] font-black flex items-center gap-1.5 shadow-md cursor-pointer transition-all shrink-0">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> 🪄 AI 辨識發票
                 </button>
             </div>
 
@@ -2514,12 +2510,12 @@ service cloud.firestore {
                     <label class="block text-xs font-bold text-slate-500 mb-1.5">上傳收據、發票或照片 (自動無損壓縮)</label>
                     <p class="text-[10px] text-purple-600 font-bold mb-1"><i class="fa-solid fa-circle-info"></i> 💡 點選上方「🪄 AI 辨識發票/收據」可自動填妥整張記帳表單喔！</p>
                     <div class="flex items-center gap-3">
-                        <label class="flex flex-col items-center justify-center w-20 h-20 bg-slate-50 border-2 border-dashed border-slate-200 hover:border-brand-living rounded-xl cursor-pointer transition-colors group">
+                        <label class="flex flex-col items-center justify-center w-20 h-20 bg-slate-50 border-2 border-dashed border-slate-200 hover:border-brand-living rounded-xl cursor-pointer transition-colors group shrink-0">
                             <i class="fa-solid fa-camera text-slate-400 group-hover:text-brand-living text-lg"></i>
                             <span class="text-[9px] text-slate-400 group-hover:text-brand-living mt-1 font-bold">選取相片</span>
                             <input type="file" accept="image/*" multiple onchange="handleImageSelect(event)" class="hidden">
                         </label>
-                        <div id="form-image-previews" class="flex gap-2 overflow-x-auto hide-scrollbar"></div>
+                        <div id="form-image-previews" class="flex gap-2 overflow-x-auto hide-scrollbar w-full"></div>
                     </div>
                     <p id="upload-status-indicator" class="text-xs text-brand-living font-bold mt-1.5"></p>
                 </div>
@@ -2573,36 +2569,36 @@ service cloud.firestore {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
                 <h3 class="text-xs font-black text-slate-400 mb-3 uppercase tracking-wider">生活開銷類別占比</h3>
-                <div class="relative h-60 flex items-center justify-center">
+                <div class="relative h-60 flex items-center justify-center w-full">
                     <canvas id="chart-living-cats" class="w-full h-full"></canvas>
-                    <div id="living-chart-fallback" class="hidden text-slate-400 text-xs text-center py-10">此月份無生活開銷</div>
+                    <div id="living-chart-fallback" class="hidden text-slate-400 text-xs text-center py-10 w-full">此月份無生活開銷</div>
                 </div>
             </div>
 
             <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
                 <h3 class="text-xs font-black text-slate-400 mb-3 uppercase tracking-wider">起粑開銷類別占比</h3>
-                <div class="relative h-60 flex items-center justify-center">
+                <div class="relative h-60 flex items-center justify-center w-full">
                     <canvas id="chart-rabbit-cats" class="w-full h-full"></canvas>
-                    <div id="rabbit-chart-fallback" class="hidden text-slate-400 text-xs text-center py-10">此月份無起粑開銷</div>
+                    <div id="rabbit-chart-fallback" class="hidden text-slate-400 text-xs text-center py-10 w-full">此月份無起粑開銷</div>
                 </div>
             </div>
 
             <div class="col-span-1 md:col-span-2 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
                 <h3 class="text-xs font-black text-slate-400 mb-3 uppercase tracking-wider">當月每日支出趨勢</h3>
-                <div class="h-44">
+                <div class="h-44 w-full">
                     <canvas id="chart-daily-trend" class="w-full h-full"></canvas>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- NEW VIEW: AI ASSISTANT CHATBOT -->
+    <!-- VIEW: AI ASSISTANT CHATBOT -->
     <section id="view-ai-chat" class="app-view space-y-4 hidden max-w-2xl mx-auto">
-        <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col h-[75vh] justify-between">
+        <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col h-[70vh] justify-between">
             
             <!-- Chat Head -->
             <div class="flex items-center gap-3 border-b border-slate-100 pb-3">
-                <span class="text-3xl">🐰</span>
+                <span class="text-3xl shrink-0">🐰</span>
                 <div>
                     <h3 class="font-extrabold text-slate-800 text-sm">起粑 AI 智能理財分析師</h3>
                     <p class="text-[10px] text-slate-400">即時根據您本月的收支紀錄與起粑花費提供省錢秘笈 💫</p>
@@ -2610,7 +2606,7 @@ service cloud.firestore {
             </div>
 
             <!-- Preloaded AI action tags -->
-            <div class="flex gap-2 overflow-x-auto py-2.5 border-b border-slate-100 hide-scrollbar flex-shrink-0">
+            <div class="flex gap-2 overflow-x-auto py-2.5 border-b border-slate-100 hide-scrollbar flex-shrink-0 w-full">
                 <button onclick="triggerQuickAiAnalysis('audit')" class="flex-shrink-0 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-100 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all">
                     📊 診斷本月收支
                 </button>
@@ -2623,14 +2619,14 @@ service cloud.firestore {
             </div>
 
             <!-- Messages Window -->
-            <div id="chat-messages-container" class="flex-grow overflow-y-auto py-4 space-y-4 flex flex-col hide-scrollbar">
+            <div id="chat-messages-container" class="flex-grow overflow-y-auto py-4 space-y-4 flex flex-col hide-scrollbar w-full">
                 <!-- Chat messages stream via JS -->
             </div>
 
             <!-- Message Input Form -->
             <div class="flex gap-2 border-t border-slate-100 pt-3 flex-shrink-0">
                 <input type="text" id="chat-input-text" placeholder="問問兔兔：『我們這個月飲料喝太多了嗎？』" onkeypress="if(event.key === 'Enter') sendAiChatMessage()" class="flex-grow bg-slate-50 border border-slate-100 rounded-xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
-                <button onclick="sendAiChatMessage()" class="bg-gradient-to-tr from-brand-living to-sky-600 hover:brightness-105 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all">
+                <button onclick="sendAiChatMessage()" class="bg-gradient-to-tr from-brand-living to-sky-600 hover:brightness-105 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0">
                     傳送
                 </button>
             </div>
@@ -2642,7 +2638,7 @@ service cloud.firestore {
     <section id="view-categories" class="app-view space-y-4 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800">消費類別管理</h2>
-            <button onclick="openAddCategoryModal()" class="bg-gradient-to-r from-brand-living to-brand-livingDark text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm flex items-center gap-1 hover:brightness-105 transition-all">
+            <button onclick="openAddCategoryModal()" class="bg-gradient-to-r from-brand-living to-brand-livingDark text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm flex items-center gap-1 hover:brightness-105 transition-all shrink-0">
                 <i class="fa-solid fa-plus text-[10px]"></i> 自訂類別
             </button>
         </div>
@@ -2650,7 +2646,7 @@ service cloud.firestore {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="space-y-2.5">
                 <div class="flex items-center gap-2 px-2">
-                    <span class="w-2.5 h-2.5 rounded-full bg-brand-living"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-brand-living shrink-0"></span>
                     <h3 class="text-xs font-extrabold text-slate-500 uppercase tracking-wider">生活開銷分類</h3>
                 </div>
                 <div id="cat-list-living" class="space-y-2"></div>
@@ -2658,7 +2654,7 @@ service cloud.firestore {
 
             <div class="space-y-2.5">
                 <div class="flex items-center gap-2 px-2">
-                    <span class="w-2.5 h-2.5 rounded-full bg-brand-rabbit"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-brand-rabbit shrink-0"></span>
                     <h3 class="text-xs font-extrabold text-slate-500 uppercase tracking-wider">起粑開銷分類</h3>
                 </div>
                 <div id="cat-list-rabbit" class="space-y-2"></div>
@@ -2746,13 +2742,13 @@ service cloud.firestore {
             
             <div class="grid grid-cols-2 gap-3.5 pt-1">
                 <button onclick="backupLocalJSON()" class="flex flex-col items-center justify-center p-3.5 bg-slate-50 hover:bg-slate-100 border border-slate-100 rounded-xl transition-colors cursor-pointer text-center group">
-                    <i class="fa-solid fa-cloud-arrow-down text-slate-400 group-hover:text-brand-living text-xl"></i>
+                    <i class="fa-solid fa-cloud-arrow-down text-slate-400 group-hover:text-brand-living text-xl shrink-0"></i>
                     <span class="text-xs font-bold text-slate-600 mt-1.5">匯出備份檔案</span>
                     <span class="text-[9px] text-slate-400 mt-0.5">下載為 JSON 檔</span>
                 </button>
 
                 <label class="flex flex-col items-center justify-center p-3.5 bg-slate-50 hover:bg-slate-100 border border-slate-100 rounded-xl transition-colors cursor-pointer text-center group">
-                    <i class="fa-solid fa-file-import text-slate-400 group-hover:text-brand-living text-xl"></i>
+                    <i class="fa-solid fa-file-import text-slate-400 group-hover:text-brand-living text-xl shrink-0"></i>
                     <span class="text-xs font-bold text-slate-600 mt-1.5">匯入備份檔案</span>
                     <span class="text-[9px] text-slate-400 mt-0.5">讀取備份資料</span>
                     <input type="file" accept=".json" onchange="restoreLocalJSON(event)" class="hidden">
@@ -2763,34 +2759,7 @@ service cloud.firestore {
 
 </main>
 
-<nav class="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 flex items-center justify-around py-2.5 px-2 z-40 shadow-lg rounded-t-2xl">
-    <a href="#" onclick="switchView('home')" data-view="home" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
-        <i class="fa-solid fa-chart-pie text-lg text-brand-living font-bold"></i>
-        <span class="text-xs text-brand-living font-bold mt-0.5">首頁</span>
-    </a>
-    <a href="#" onclick="switchView('records')" data-view="records" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
-        <i class="fa-solid fa-list-ul text-lg"></i>
-        <span class="text-xs mt-0.5">明細</span>
-    </a>
-    
-    <!-- Floating Quick Add Button -->
-    <div class="relative -top-5">
-        <button id="quick-add-fab" class="w-13 h-13 rounded-full bg-gradient-to-tr from-brand-living via-sky-500 to-brand-rabbit text-white flex items-center justify-center text-xl shadow-md border-4 border-white select-none hover:brightness-110 active:scale-95 transition-all">
-            <i class="fa-solid fa-plus"></i>
-        </button>
-    </div>
-
-    <a href="#" onclick="switchView('ai-chat')" data-view="ai-chat" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
-        <i class="fa-solid fa-wand-magic-sparkles text-lg"></i>
-        <span class="text-xs mt-0.5">AI 助理</span>
-    </a>
-    <a href="#" onclick="switchView('settings')" data-view="settings" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
-        <i class="fa-solid fa-gear text-lg"></i>
-        <span class="text-xs mt-0.5">成員設定</span>
-    </a>
-</nav>
--->
-<nav class="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 grid grid-cols-5 items-center py-2 z-40 shadow-lg rounded-t-2xl pb-safe">
+<nav class="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 grid grid-cols-5 items-center pt-2.5 z-40 shadow-lg rounded-t-2xl" style="padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 12px));">
     <a href="#" onclick="switchView('home')" data-view="home" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
         <i class="fa-solid fa-chart-pie text-lg text-brand-living font-bold"></i>
         <span class="text-[11px] text-brand-living font-bold mt-0.5">首頁</span>
@@ -2802,7 +2771,7 @@ service cloud.firestore {
     
     <!-- Floating Quick Add Button (Centered mathematically in grid column 3) -->
     <div class="relative h-10 flex items-center justify-center">
-        <button id="quick-add-fab" class="absolute -top-7 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-gradient-to-tr from-brand-living via-sky-500 to-brand-rabbit text-white flex items-center justify-center text-2xl shadow-xl border-4 border-white select-none hover:brightness-110 active:scale-95 transition-all z-50">
+        <button onclick="resetRecordForm(); switchView('add');" class="absolute -top-7 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-gradient-to-tr from-brand-living via-sky-500 to-brand-rabbit text-white flex items-center justify-center text-2xl shadow-xl border-4 border-white select-none hover:brightness-110 active:scale-95 transition-all z-50">
             <i class="fa-solid fa-plus"></i>
         </button>
     </div>
@@ -2851,7 +2820,7 @@ service cloud.firestore {
 </div>
 
 <!-- Add Category modal -->
-<div id="add-category-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
+<div id="add-category-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden" onclick="closeAddCategoryModal()">
     <div class="bg-white w-full max-w-sm rounded-3xl p-5 space-y-4 shadow-xl" onclick="event.stopPropagation()">
         <h3 class="font-extrabold text-slate-800 text-sm">新增自訂消費分類</h3>
         
@@ -2917,7 +2886,7 @@ service cloud.firestore {
 </div>
 
 <!-- Add Template Modal -->
-<div id="add-template-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
+<div id="add-template-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden" onclick="closeAddTemplateModal()">
     <div class="bg-white w-full max-w-sm rounded-3xl p-5 space-y-4 shadow-xl" onclick="event.stopPropagation()">
         <h3 class="font-extrabold text-slate-800 text-sm">新增常用記帳範本</h3>
         
@@ -2974,7 +2943,7 @@ service cloud.firestore {
 </div>
 
 <!-- Confirmation dialog modal -->
-<div id="confirm-dialog-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
+<div id="confirm-dialog-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden" onclick="closeConfirmModal()">
     <div class="bg-white w-full max-w-sm rounded-3xl p-5 space-y-4 shadow-xl" onclick="event.stopPropagation()">
         <div class="text-center space-y-2">
             <div class="w-12 h-12 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center text-xl mx-auto">
