@@ -60,13 +60,6 @@
             -ms-overflow-style: none;
             scrollbar-width: none;
         }
-        /* Mobile-friendly active state */
-        .active-tab {
-            color: #0ea5e9;
-        }
-        .active-tab-rabbit {
-            color: #f97316;
-        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col pb-20 md:pb-0">
@@ -76,7 +69,7 @@
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    // GitHub / EZPage Custom Firebase Database Support
+    // Handling customized configuration
     const storedConfig = localStorage.getItem('custom_firebase_config');
     const firebaseConfig = storedConfig ? JSON.parse(storedConfig) : (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
         apiKey: "",
@@ -93,13 +86,12 @@
     let app, db, auth;
     let isFirebaseReady = false;
 
-    // Local Storage Fallbacks if Firebase isn't configured
+    // Local Storage Fallbacks
     let localRecords = JSON.parse(localStorage.getItem('ledger_records') || '[]');
     let localCategories = JSON.parse(localStorage.getItem('ledger_categories') || '[]');
     let localTemplates = JSON.parse(localStorage.getItem('ledger_templates') || '[]');
 
     async function initFirebase() {
-        // If config is dummy/empty, skip to local fallback mode
         if (!firebaseConfig || !firebaseConfig.apiKey) {
             console.warn("No active Firebase config found. Running in local-first mode.");
             isFirebaseReady = false;
@@ -113,7 +105,6 @@
             db = getFirestore(app);
             auth = getAuth(app);
 
-            // Auth Priority: Custom Token -> Anonymous Auth (Rule 3)
             let userCredential;
             if (initialAuthToken) {
                 userCredential = await signInWithCustomToken(auth, initialAuthToken);
@@ -123,7 +114,7 @@
 
             if (userCredential && userCredential.user) {
                 isFirebaseReady = true;
-                showToast('雲端資料庫連線成功！資料已同步。', 'success');
+                showToast('雲端資料庫連線成功！資料已即時同步。', 'success');
                 setupFirestoreListeners();
             } else {
                 throw new Error("Authentication failed");
@@ -137,14 +128,43 @@
         updateDatabaseStatusPill();
     }
 
+    function cleanAndParseFirebaseConfig(inputStr) {
+        let cleaned = inputStr.trim();
+        // Remove variable declarations like "const firebaseConfig = " or "var config = "
+        cleaned = cleaned.replace(/^(const|let|var)\s+\w+\s*=\s*/i, '');
+        // Remove ending semicolon if present
+        if (cleaned.endsWith(';')) {
+            cleaned = cleaned.slice(0, -1);
+        }
+        // If wrapped in parentheses, strip them
+        cleaned = cleaned.replace(/^\((.*)\)$/s, '$1');
+
+        try {
+            // First pass: try standard parsing
+            return JSON.parse(cleaned);
+        } catch (e) {
+            // Second pass: Leniently insert double-quotes for key-value styling and convert quotes
+            try {
+                let jsonStyle = cleaned
+                    .replace(/([{,]\s*)([a-zA-Z0-9_$]+)\s*:/g, '$1"$2":') // Quotes key properties
+                    .replace(/:\s*'([^']*)'/g, ':"$1"') // Fix single quotes values
+                    .replace(/,\s*([}\]])/g, '$1'); // Eliminate trailing commas
+
+                return JSON.parse(jsonStyle);
+            } catch (err2) {
+                console.error("Lenient parse failed:", err2);
+                throw new Error("格式錯誤，請確認輸入的是正確的大括號 {...} 格式！");
+            }
+        }
+    }
+
     window.addEventListener('load', () => {
         initFirebase();
         initializeAppState();
     });
 
-    // App state management
     const state = {
-        currentView: 'home', // 'home' | 'records' | 'add' | 'stats' | 'categories' | 'settings' | 'ai-chat'
+        currentView: 'home',
         syncCode: localStorage.getItem('ledger_sync_code') || 'LOVERABBIT2026',
         currentUser: localStorage.getItem('ledger_user_name') || '女友小美',
         partnerUser: localStorage.getItem('ledger_partner_name') || '男友阿明',
@@ -152,8 +172,8 @@
         categories: [],
         templates: [],
         selectedMonth: new Date().toISOString().substring(0, 7), // YYYY-MM
-        editId: null, // For editing existing records
-        copyId: null, // For copying
+        editId: null,
+        copyId: null,
         isUploading: false,
         chatHistory: [
             {
@@ -163,9 +183,7 @@
         ]
     };
 
-    // Default Categories if empty
     const defaultCategories = [
-        // Living Account Categories
         { id: 'c1', account: 'living', type: 'expense', name: '外食晚餐', icon: 'fa-utensils', color: '#0ea5e9' },
         { id: 'c2', account: 'living', type: 'expense', name: '日常飲料', icon: 'fa-glass-water', color: '#38bdf8' },
         { id: 'c3', account: 'living', type: 'expense', name: '買菜下廚', icon: 'fa-carrot', color: '#22c55e' },
@@ -176,7 +194,6 @@
         { id: 'c8', account: 'living', type: 'income', name: '薪資收入', icon: 'fa-wallet', color: '#10b981' },
         { id: 'c9', account: 'living', type: 'income', name: '其他收入', icon: 'fa-coins', color: '#84cc16' },
         
-        // Rabbit Account Categories
         { id: 'c10', account: 'rabbit', type: 'expense', name: '起粑牧草', icon: 'fa-seedling', color: '#f97316' },
         { id: 'c11', account: 'rabbit', type: 'expense', name: '起粑飼料', icon: 'fa-bowl-food', color: '#fdba74' },
         { id: 'c12', account: 'rabbit', type: 'expense', name: '起粑零食', icon: 'fa-cookie', color: '#fb923c' },
@@ -187,7 +204,6 @@
         { id: 'c17', account: 'rabbit', type: 'expense', name: '起粑其他雜支', icon: 'fa-ellipsis', color: '#64748b' }
     ];
 
-    // Default Templates
     const defaultTemplates = [
         { id: 't1', title: '全家大罐鮮乳', account: 'living', type: 'expense', amount: 185, category: '居家生活用品', payer: '共同分攤', payMethod: '電子支付' },
         { id: 't2', title: '雙人巷口排骨飯', account: 'living', type: 'expense', amount: 240, category: '外食晚餐', payer: '共同分攤', payMethod: '現金' },
@@ -226,9 +242,8 @@
 
     function setupFirestoreListeners() {
         if (!isFirebaseReady) return;
-        // Guard checking authentication state before querying (Rule 3)
         if (!auth || !auth.currentUser) {
-            console.warn("Authorization not verified yet. Postponing real-time synchronization.");
+            console.warn("Authorization verification pending...");
             return;
         }
 
@@ -238,12 +253,10 @@
 
         showLoading(true);
 
-        // Strict Paths (Rule 1)
         const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'records');
         const categoriesCol = collection(db, 'artifacts', appId, 'public', 'data', 'categories');
         const templatesCol = collection(db, 'artifacts', appId, 'public', 'data', 'templates');
 
-        // Rule 2: Fetch all matching synchronization data without complex filters, handle in memory
         unsubscribeRecords = onSnapshot(recordsCol, (snapshot) => {
             const allRecords = [];
             snapshot.forEach(doc => {
@@ -254,7 +267,7 @@
             renderApp();
             showLoading(false);
         }, (error) => {
-            console.error("Snapshot error on records:", error);
+            console.error("Records sync error:", error);
             showToast("載入雲端資料錯誤，請重新整理", "danger");
             showLoading(false);
         });
@@ -271,7 +284,7 @@
                 saveLocalData();
                 renderApp();
             }
-        }, (error) => console.error("Categories snapshot error:", error));
+        }, (error) => console.error("Categories sync error:", error));
 
         unsubscribeTemplates = onSnapshot(templatesCol, (snapshot) => {
             const list = [];
@@ -282,7 +295,7 @@
             }
             saveLocalData();
             renderApp();
-        }, (error) => console.error("Templates snapshot error:", error));
+        }, (error) => console.error("Templates sync error:", error));
     }
 
     async function initializeCloudDefaults() {
@@ -303,7 +316,7 @@
                 });
             }
         } catch (e) {
-            console.error("Error setting cloud defaults:", e);
+            console.error("Cloud default init failed:", e);
         }
     }
 
@@ -317,14 +330,12 @@
         const partnerInput = document.getElementById('partner-name-input');
         if (partnerInput) partnerInput.value = state.partnerUser;
 
-        // Populate Custom Database fields on load
         const storedConfigText = localStorage.getItem('custom_firebase_config');
         if (storedConfigText) {
             document.getElementById('custom-firebase-json').value = JSON.stringify(JSON.parse(storedConfigText), null, 2);
         }
         document.getElementById('custom-app-id-input').value = localStorage.getItem('custom_app_id') || 'shared-ledger-2026';
 
-        // View event listeners for bottom/top navigation
         document.querySelectorAll('.nav-tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -365,16 +376,13 @@
     function switchView(viewName) {
         state.currentView = viewName;
         
-        // Hide all views
         document.querySelectorAll('.app-view').forEach(view => {
             view.classList.add('hidden');
         });
 
-        // Show targets
         const targetView = document.getElementById(`view-${viewName}`);
         if (targetView) targetView.classList.remove('hidden');
 
-        // Update Nav visual indicators
         document.querySelectorAll('.nav-tab').forEach(tab => {
             const tabView = tab.getAttribute('data-view');
             const icon = tab.querySelector('i');
@@ -389,7 +397,6 @@
             }
         });
 
-        // Perform specific setup for newly opened view
         if (viewName === 'home') {
             renderHomeView();
         } else if (viewName === 'records') {
@@ -419,7 +426,7 @@
                 img.src = event.target.result;
                 img.onload = function () {
                     const canvas = document.createElement('canvas');
-                    const max_width = 400; // Optimal thumbnail & invoice readability
+                    const max_width = 400; 
                     let width = img.width;
                     let height = img.height;
 
@@ -457,7 +464,6 @@
         return payer === state.currentUser ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700';
     }
 
-    // Modal Notifications System
     function showToast(message, type = 'info') {
         const toast = document.createElement('div');
         toast.className = `fixed top-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium transition-all duration-300 transform translate-y-2 opacity-0`;
@@ -814,7 +820,6 @@
                 showLoading(true);
                 try {
                     if (isFirebaseReady) {
-                        // Guard with Auth Check before query (Rule 3)
                         if (!auth || !auth.currentUser) {
                             showToast('未登入或連線不穩定，無法刪除明細！', 'danger');
                             return;
@@ -957,11 +962,10 @@
         const loader = document.getElementById('global-loader');
         const loaderText = loader.querySelector('span');
         
-        loaderText.innerText = "✨ 兔兔 AI 正在辨識發票與整理項目中...";
+        loaderText.innerText = "✨ 起粑 AI 正在辨識發票與整理項目中...";
         loader.classList.remove('hidden');
 
         try {
-            // Get base64 representation
             const fullBase64 = formImages[0];
             const base64Parts = fullBase64.split(',');
             const mimeType = base64Parts[0].split(';')[0].split(':')[1];
@@ -981,7 +985,7 @@
             
             你必須且只能回傳一個有效的 JSON 物件，不可以加上 Markdown \`\`\`json 的格式標記。`;
 
-            const apiKey = ""; // Canvas Injector handles API keys at runtime
+            const apiKey = ""; 
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
             const payload = {
@@ -1029,13 +1033,11 @@
             if (textResponse) {
                 const parsed = JSON.parse(textResponse);
                 
-                // Prefill form
                 document.getElementById('rec-title').value = parsed.title || '';
                 document.getElementById('rec-amount').value = parsed.amount || '';
                 document.getElementById('rec-account').value = parsed.account || 'living';
                 document.getElementById('rec-type').value = parsed.type || 'expense';
                 
-                // Remap categories
                 onAccountChange();
                 document.getElementById('rec-category').value = parsed.category || '';
                 document.getElementById('rec-pay-method').value = parsed.payMethod || '現金';
@@ -1106,7 +1108,6 @@
         try {
             if (state.editId) {
                 if (isFirebaseReady) {
-                    // Guard with Auth Check before query (Rule 3)
                     if (!auth || !auth.currentUser) {
                         showToast('連線中斷，請稍後重試。', 'danger');
                         return;
@@ -1125,7 +1126,6 @@
                 recordPayload.createdAt = Date.now();
 
                 if (isFirebaseReady) {
-                    // Guard with Auth Check before query (Rule 3)
                     if (!auth || !auth.currentUser) {
                         showToast('連線中斷，請稍後重試。', 'danger');
                         return;
@@ -1295,7 +1295,7 @@
 
         const headers = ['日期', '帳本帳戶', '收支類型', '金額', '消費分類', '項目名稱', '付款人', '付款方式', '備註', '新增者'];
         const csvRows = [];
-        csvRows.push('\uFEFF' + headers.join(',')); // UTF-8 BOM
+        csvRows.push('\uFEFF' + headers.join(',')); 
 
         state.records.forEach(r => {
             const row = [
@@ -1569,7 +1569,6 @@
 
         try {
             if (isFirebaseReady) {
-                // Guard check before firestore (Rule 3)
                 if (!auth || !auth.currentUser) {
                     showToast('未驗證使用者，無法上傳分類！', 'danger');
                     return;
@@ -1604,7 +1603,6 @@
                 showLoading(true);
                 try {
                     if (isFirebaseReady) {
-                        // Guard check before firestore (Rule 3)
                         if (!auth || !auth.currentUser) {
                             showToast('未驗證，無法執行此操作！', 'danger');
                             return;
@@ -1702,7 +1700,7 @@
         }
 
         try {
-            const parsedConfig = JSON.parse(jsonStr);
+            const parsedConfig = cleanAndParseFirebaseConfig(jsonStr);
             if (!parsedConfig.apiKey || !parsedConfig.projectId) {
                 showToast('無效的 Firebase JSON（必須包含 apiKey 與 projectId）', 'danger');
                 return;
@@ -1721,7 +1719,7 @@
             }, 1500);
 
         } catch (e) {
-            showToast('JSON 格式錯誤，請確認貼上的是完整的物件結構。', 'danger');
+            showToast(e.message || 'JSON 格式解析失敗，請確認大括號與分號！', 'danger');
         }
     };
 
@@ -1781,7 +1779,6 @@
 
         try {
             if (isFirebaseReady) {
-                // Guard checking before firestore (Rule 3)
                 if (!auth || !auth.currentUser) {
                     showToast('未驗證使用者，上傳常用項目失敗！', 'danger');
                     return;
@@ -1813,7 +1810,6 @@
                 showLoading(true);
                 try {
                     if (isFirebaseReady) {
-                        // Guard checking before firestore (Rule 3)
                         if (!auth || !auth.currentUser) {
                             showToast('未驗證使用者，無法刪除！', 'danger');
                             return;
@@ -1936,7 +1932,7 @@
                 ? 'bg-sky-500 text-white rounded-br-none self-end ml-12' 
                 : 'bg-white text-slate-800 rounded-bl-none self-start mr-12 border border-slate-100';
             const align = isUser ? 'justify-end' : 'justify-start';
-            const name = isUser ? '您' : '🐰 兔兔理財小助理';
+            const name = isUser ? '您' : '🐰 起粑理財小助理';
 
             return `
                 <div class="flex flex-col ${align} space-y-1">
@@ -1948,7 +1944,6 @@
             `;
         }).join('');
 
-        // Auto-scroll
         setTimeout(() => {
             container.scrollTop = container.scrollHeight;
         }, 50);
@@ -1961,11 +1956,9 @@
 
         if (!customPrompt) inputEl.value = '';
 
-        // Add user msg
         state.chatHistory.push({ role: 'user', text: text });
         renderAiChatHistory();
 
-        // Show typing indicator
         const container = document.getElementById('chat-messages-container');
         const typingId = 'chat-typing-indicator';
         const typingEl = document.createElement('div');
@@ -1986,10 +1979,8 @@
         container.scrollTop = container.scrollHeight;
 
         try {
-            // Extract current monthly records context
             const currentMonthRecords = state.records.filter(r => r.date && r.date.startsWith(state.selectedMonth));
             
-            // Format ledger context
             const recordsSummary = currentMonthRecords.map(r => ({
                 日期: r.date,
                 帳戶: r.account === 'living' ? '生活開銷' : '起粑開銷',
@@ -2016,7 +2007,7 @@
             請使用繁體中文（台灣習慣用語，如『發票』、『電子支付』、『便當』、『提摩西草』等）。
             請適時加入一些可愛的表情符號 (e.g. 🐰, 🐾, 🥗, 💸) 增加趣味性！並適時給出情侶的理財省錢妙招。`;
 
-            const apiKey = ""; // Canvas Injector handles API keys at runtime
+            const apiKey = ""; 
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
             const payload = {
@@ -2043,7 +2034,6 @@
             const result = await response.json();
             const reply = result.candidates?.[0]?.content?.parts?.[0]?.text;
 
-            // Remove typing indicator
             const indicator = document.getElementById(typingId);
             if (indicator) indicator.remove();
 
@@ -2134,7 +2124,7 @@
         </div>
     </div>
 
-    <!-- Desktop Navigation View tabs -->
+    <!-- Desktop Navigation -->
     <nav class="hidden md:flex items-center gap-1">
         <a href="#" onclick="switchView('home')" class="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors">首頁總覽</a>
         <a href="#" onclick="switchView('records')" class="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors">歷史紀錄</a>
@@ -2223,7 +2213,7 @@
 
         <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
             <h4 class="text-xs font-bold text-slate-400 flex items-center gap-1">
-                <i class="fa-solid fa-chart-line"></i> 收支差異分析
+                <i class="fa-solid fa-chart-line"></i> 收支差異 analysis
             </h4>
             <div id="mom-comparison-text" class="pt-1">
                 <div class="h-4 bg-slate-100 rounded-md animate-pulse w-2/3"></div>
@@ -2851,7 +2841,7 @@
                 <i class="fa-solid fa-triangle-exclamation"></i>
             </div>
             <h3 id="confirm-title" class="font-black text-slate-800 text-sm">確認操作</h3>
-            <p id="confirm-body" class="text-xs text-slate-500 leading-relaxed">此操作將無法復原，您確定要繼續執行嗎？</p>
+            <p id="confirm-body" class="text-xs text-slate-500 leading-relaxed">此操作將無法復原，您確定要繼續執行嗎?</p>
         </div>
 
         <div class="flex gap-2 pt-2">
