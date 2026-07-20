@@ -338,7 +338,7 @@
                     <li>點選上方的 <b>「Rules」(規則)</b> 分頁。</li>
                     <li>將裡面的內容修改為允許所有人讀寫：</li>
                 </ol>
-                <pre class="bg-white/80 dark:bg-slate-800/80 p-2 rounded-lg font-mono text-[9px] mt-2 border border-amber-200 dark:border-amber-900/60 overflow-x-auto text-slate-700 dark:text-slate-300">rules_version = '2';
+                <pre class="bg-white/80 dark:bg-slate-800/80 p-2 rounded-lg font-mono text-[9px] mt-2 border border-amber-200 dark:border-amber-900/60 overflow-x-auto text-slate-700 dark:text-zinc-300">rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {
@@ -760,6 +760,28 @@ service cloud.firestore {
         }).join('');
     }
 
+    window.applyTemplate = function(id) {
+        const t = state.templates.find(item => item.id === id);
+        if (!t) return;
+        
+        switchView('add');
+        setTimeout(() => {
+            document.getElementById('rec-date').value = new Date().toISOString().substring(0, 10);
+            document.getElementById('rec-account').value = t.account;
+            document.getElementById('rec-type').value = t.type || 'expense';
+            onAccountChange();
+            document.getElementById('rec-category').value = t.category;
+            document.getElementById('rec-amount').value = t.amount;
+            document.getElementById('rec-title').value = t.title;
+            document.getElementById('rec-payer').value = t.payer || '共同分攤';
+            document.getElementById('rec-pay-method').value = t.payMethod || '現金';
+            document.getElementById('rec-notes').value = '（由快速範本自動帶入）';
+            if (t.account === 'rabbit' && t.type !== 'income') {
+                document.getElementById('rec-channel').value = t.channel || '';
+            }
+        }, 120);
+    };
+
     function renderRecentRecords(records) {
         const container = document.getElementById('recent-records-container');
         if (!container) return;
@@ -805,8 +827,8 @@ service cloud.firestore {
         const clipIcon = hasAttachment ? `<i class="fa-solid fa-paperclip text-slate-400 text-xs ml-1 hover:text-brand-living"></i>` : '';
         
         // Dynamic Channel badge for Rabbit Expenses
-        const channelBadge = (r.account === 'rabbit' && r.type === 'expense' && r.channel) 
-            ? `<span>•</span> <span class="text-amber-600 dark:text-amber-400 font-semibold text-[10px] flex items-center gap-0.5 whitespace-nowrap"><i class="fa-solid fa-store text-[9px]"></i> ${r.channel}</span>` 
+        const channelStr = (r.account === 'rabbit' && r.type === 'expense' && r.channel) 
+            ? `<span class="text-amber-600 dark:text-amber-400 font-semibold text-[10px] flex items-center gap-0.5 whitespace-nowrap ml-1.5"><i class="fa-solid fa-store text-[9px]"></i> ${r.channel}</span>` 
             : '';
 
         return `
@@ -816,21 +838,28 @@ service cloud.firestore {
                         <i class="fa-solid ${iconClass}"></i>
                     </div>
                     <div class="min-w-0 flex-1">
+                        <!-- Row 1: Title -->
                         <div class="flex items-center gap-1.5 flex-wrap">
                             <span class="font-bold text-sm text-slate-800 dark:text-zinc-200 truncate">${r.title || r.category}</span>
                             ${clipIcon}
                         </div>
-                        <div class="flex items-center gap-2 mt-0.5 text-xs text-slate-400 dark:text-zinc-500 flex-wrap">
-                            <span class="whitespace-nowrap">${formatDate(r.date)}</span>
-                            <span class="text-[10px] text-slate-300 dark:text-zinc-700">•</span>
-                            <span class="whitespace-nowrap">${accountBadge}</span>
-                            <span class="text-[10px] text-slate-300 dark:text-zinc-700">•</span>
-                            <span class="px-1.5 py-0.2 rounded-md font-medium text-[10px] whitespace-nowrap ${getPayerBadgeClass(r.payer)}">${r.payer}</span>
-                            ${channelBadge}
+                        <!-- Subtitle Metadata Stack: Uniform Layout & Spacing -->
+                        <div class="mt-1 flex flex-col gap-1 text-[11px]">
+                            <!-- Row 2: Date & Optional Store Channel -->
+                            <div class="flex items-center text-slate-400 dark:text-zinc-500 gap-1.5">
+                                <i class="fa-regular fa-calendar-days text-[10px]"></i>
+                                <span class="font-medium whitespace-nowrap">${formatDate(r.date)}</span>
+                                ${channelStr}
+                            </div>
+                            <!-- Row 3: Account & Payer Badges (Uniform Height Guarantee) -->
+                            <div class="flex items-center gap-1.5 pt-0.5">
+                                ${accountBadge}
+                                <span class="px-1.5 py-0.5 rounded-md font-semibold text-[10px] whitespace-nowrap ${getPayerBadgeClass(r.payer)}">${r.payer}</span>
+                            </div>
                         </div>
                     </div>
                 </div>
-                <div class="text-right shrink-0 ml-3">
+                <div class="text-right shrink-0 ml-3 self-center">
                     <div class="text-base font-black ${amtColor} whitespace-nowrap">${sign}${r.amount.toLocaleString()}</div>
                     <div class="text-[10px] text-slate-400 dark:text-zinc-500 mt-0.5 whitespace-nowrap">${r.payMethod || '其他'} • 由${r.updatedBy || r.createdBy || '共同'}錄</div>
                 </div>
@@ -1376,7 +1405,6 @@ service cloud.firestore {
         const dateFrom = document.getElementById('filter-date-from').value;
         const dateTo = document.getElementById('filter-date-to').value;
 
-        // Apply visual segment tab override
         const filterType = state.recordTabFilter;
 
         bindCategoryFilters();
@@ -1423,8 +1451,8 @@ service cloud.firestore {
 
         if (filtered.length === 0) {
             listContainer.innerHTML = `
-                <div class="text-center py-12 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800">
-                    <p class="text-slate-400 dark:text-slate-500">找不到符合篩選條件的明細</p>
+                <div class="text-center py-12 bg-white dark:bg-zinc-900 rounded-2xl border border-slate-100 dark:border-zinc-800">
+                    <p class="text-slate-400 dark:text-zinc-500">找不到符合篩選條件的明細</p>
                 </div>
             `;
             return;
@@ -1454,7 +1482,7 @@ service cloud.firestore {
             return `
                 <div class="mb-5">
                     <div class="flex items-center justify-between px-2 mb-2">
-                        <span class="text-xs font-bold text-slate-500 dark:text-slate-400">${date.replace('-', '年').replace('-', '月') + '日'} (星期${weekday})</span>
+                        <span class="text-xs font-bold text-slate-500 dark:text-zinc-400">${date.replace('-', '年').replace('-', '月') + '日'} (星期${weekday})</span>
                         <span class="text-[11px] font-bold ${balanceColor}">日小計 ${balanceSign}${formatCurrency(groupSum)}</span>
                     </div>
                     <div class="space-y-2">
@@ -1502,11 +1530,9 @@ service cloud.firestore {
     }
 
     window.triggerSearchFilter = function() {
-        // Keep the segmented tab control in sync with advanced selector
         const advancedVal = document.getElementById('filter-type').value;
         if (state.recordTabFilter !== advancedVal) {
             state.recordTabFilter = advancedVal;
-            // Redraw segmented pills style
             const tabs = {
                 all: document.getElementById('tab-filter-all'),
                 expense: document.getElementById('tab-filter-expense'),
@@ -1516,9 +1542,9 @@ service cloud.firestore {
                 const tab = tabs[k];
                 if (!tab) return;
                 if (k === advancedVal) {
-                    tab.className = "flex-1 py-2 text-xs font-bold rounded-lg transition-all text-center cursor-pointer bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 shadow-sm";
+                    tab.className = "flex-1 py-2 text-xs font-bold rounded-lg transition-all text-center cursor-pointer bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm";
                 } else {
-                    tab.className = "flex-1 py-2 text-xs font-bold rounded-lg transition-all text-center cursor-pointer text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200";
+                    tab.className = "flex-1 py-2 text-xs font-bold rounded-lg transition-all text-center cursor-pointer text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200";
                 }
             });
         }
@@ -1662,7 +1688,6 @@ service cloud.firestore {
         const ctxRabbit = document.getElementById('chart-rabbit-cats').getContext('2d');
         const ctxTrend = document.getElementById('chart-daily-trend').getContext('2d');
 
-        // Dynamically calculate chart base colors depending on Theme Mode!
         const isDark = document.documentElement.classList.contains('dark');
         const chartGridColor = isDark ? '#27272a' : '#f1f5f9';
         const chartTextColor = isDark ? '#a1a1aa' : '#64748b';
@@ -2271,7 +2296,7 @@ service cloud.firestore {
         }
 
         if (text.includes('rabbit') || text.includes('起粑開銷合適度') || text.includes('起粑') || text.includes('兔子')) {
-            return `🌾 **起粑開銷合適度分析** 🐇\n\n本月用於起粑開銷的金額為 **${formatCurrency(rabbitExpense)}**。\n其中包含牧草、飼料、以及看醫生的健檢費用。\n\n💡 **起粑健康省錢秘訣**：\n1. 提摩西牧草買 **5KG 大包裝** 最便宜！算下來一公斤能省下好幾十元喔！\n2. 定期清理便便與梳毛，能大大降低肚肚脹氣毛球症的醫藥費喔！\n3. 零食適量就好，多吃牧草牙齒才健康，又能省下磨牙醫療費，是一舉兩得耶！🐾✨`;
+            return `🌾 **起粑開銷合適度分析** 🐇\n\n本月用於起粑開銷的金額為 **${formatCurrency(rabbitExpense)}**。\n其中包含起粑牧草、飼料、以及看醫生的健檢費用。\n\n💡 **起粑健康省錢秘訣**：\n1. 提摩西牧草買 **5KG 大包裝** 最便宜！算下來一公斤能省下好幾十元喔！\n2. 定期清理便便與梳毛，能大大降低肚肚脹氣毛球症的醫藥費喔！\n3. 零食適量就好，多吃牧草牙齒才健康，省磨牙醫療費，是一舉兩得耶！🐾✨`;
         }
 
         if (text.includes('couple') || text.includes('情侶省錢挑戰') || text.includes('省錢')) {
@@ -2325,7 +2350,7 @@ service cloud.firestore {
         typingEl.className = "flex justify-start space-y-1 flex-col";
         typingEl.innerHTML = `
             <span class="text-[10px] text-slate-400 font-bold px-1">🐰 起粑理財小助理</span>
-            <div class="px-4 py-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 shadow-sm text-xs text-slate-400 dark:text-slate-500 flex items-center gap-2 self-start rounded-bl-none">
+            <div class="px-4 py-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-100 dark:border-zinc-800 shadow-sm text-xs text-slate-400 dark:text-zinc-500 flex items-center gap-2 self-start rounded-bl-none">
                 <div class="flex gap-1">
                     <span class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></span>
                     <span class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></span>
@@ -2543,15 +2568,18 @@ service cloud.firestore {
 
     <!-- VIEW 1: HOME PAGE OVERVIEW -->
     <section id="view-home" class="app-view space-y-5">
-        <div onclick="switchView('ai-chat')" class="bg-gradient-to-r from-orange-500 via-amber-500 to-brand-rabbit p-3.5 rounded-2xl text-white shadow-md flex items-center justify-between cursor-pointer hover:brightness-105 transition-all">
-            <div class="flex items-center gap-3">
-                <span class="text-2xl animate-bounce">🐰</span>
-                <div>
-                    <h4 class="text-xs font-bold">「起粑 AI 記帳分析助理」上線囉！</h4>
-                    <p class="text-[10px] opacity-90 mt-0.5">點此詢問：自動診斷本月花費比例 & 提供起粑照護省錢與商家購買建議！🐾</p>
+        <!-- Sleek, non-intrusive AI Banner -->
+        <div onclick="switchView('ai-chat')" class="bg-gradient-to-r from-orange-500/10 to-brand-rabbit/10 hover:from-orange-500/15 hover:to-brand-rabbit/15 border border-orange-200/40 dark:border-orange-900/30 p-2.5 rounded-2xl flex items-center justify-between cursor-pointer transition-all">
+            <div class="flex items-center gap-2.5 min-w-0">
+                <span class="text-xl shrink-0 animate-pulse">🐰</span>
+                <div class="min-w-0">
+                    <h4 class="text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5">
+                        起粑 AI 記帳分析助理上線囉！
+                    </h4>
+                    <p class="text-[10px] text-slate-500 dark:text-zinc-400 truncate mt-0.5">點此快速診斷本月花費比例、存超支分析與照護省錢指南 🐾</p>
                 </div>
             </div>
-            <i class="fa-solid fa-circle-chevron-right text-lg shrink-0"></i>
+            <i class="fa-solid fa-angle-right text-xs text-orange-500 shrink-0 ml-2"></i>
         </div>
 
         <div class="flex items-center justify-between bg-white dark:bg-zinc-900 p-3.5 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm transition-colors">
@@ -2938,7 +2966,7 @@ service cloud.firestore {
 
             <!-- Message Input Form -->
             <div class="flex gap-2 border-t border-slate-100 dark:border-zinc-800 pt-3 flex-shrink-0">
-                <input type="text" id="chat-input-text" placeholder="問問起粑助理：『我們這個月手搖杯喝太多了嗎？』" onkeypress="if(event.key === 'Enter') sendAiChatMessage()" class="flex-grow bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                <input type="text" id="chat-input-text" placeholder="問問起粑助理：『我們這個月飲料喝太多了嗎？』" onkeypress="if(event.key === 'Enter') sendAiChatMessage()" class="flex-grow bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
                 <button onclick="sendAiChatMessage()" class="bg-gradient-to-tr from-brand-living to-sky-600 hover:brightness-105 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0">
                     傳送
                 </button>
@@ -3152,9 +3180,9 @@ service cloud.firestore {
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">📅 消費日期</span><span id="ins-val-date" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">💼 所屬帳本</span><span id="ins-val-account" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">↕️ 交易類型</span><span id="ins-val-type" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
-            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">👤 付款/交易人</span><span id="ins-val-payer" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
-            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">💳 付款方式</span><span id="ins-val-method" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
-            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">📝 登入/修改人</span><span id="ins-val-creator" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">👤 付款/交易人</span><span id="ins-val-payer" class="font-semibold text-slate-880 dark:text-zinc-200"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">💳 付款方式</span><span id="ins-val-method" class="font-semibold text-slate-880 dark:text-zinc-200"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">📝 登入/修改人</span><span id="ins-val-creator" class="font-semibold text-slate-880 dark:text-zinc-200"></span></div>
             
             <!-- Dynamic channel row inside details dialog -->
             <div id="ins-row-channel" class="flex justify-between hidden"><span class="font-bold text-slate-400 dark:text-zinc-500">🛒 購買通路/商店</span><span id="ins-val-channel" class="font-semibold text-amber-600 dark:text-amber-400"></span></div>
