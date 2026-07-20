@@ -240,34 +240,69 @@
     let unsubscribeCategories = null;
     let unsubscribeTemplates = null;
 
-    // NEW: Cloud Error Diagnostic Handler
+    // NEW & IMPROVED: Bulletproof Cloud Error Diagnostic Handler with dynamic fallback
     function handleCloudError(context, error) {
         console.error(`Cloud Error [${context}]:`, error);
         
-        const modal = document.getElementById('cloud-error-modal');
+        let modal = document.getElementById('cloud-error-modal');
+        
+        // If the HTML element doesn't exist yet, build it dynamically via JavaScript!
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'cloud-error-modal';
+            modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4';
+            modal.innerHTML = `
+                <div class="bg-white w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl overflow-y-auto max-h-[90vh]" onclick="event.stopPropagation()">
+                    <div class="text-center space-y-2">
+                        <div class="w-14 h-14 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center text-2xl mx-auto">
+                            <i class="fa-solid fa-cloud-bolt animate-bounce text-rose-500"></i>
+                        </div>
+                        <h3 class="font-black text-slate-800 text-base">☁️ Firebase 雲端連線診斷助手</h3>
+                        <p class="text-xs text-slate-500 leading-relaxed">偵測到雲端資料庫權限不足，請參考下方步驟快速排除問題：</p>
+                    </div>
+
+                    <div class="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 text-left space-y-1.5 font-mono text-[11px] text-slate-600">
+                        <div><span class="font-bold text-slate-800">📌 錯誤來源：</span><span id="diagnostic-context"></span></div>
+                        <div><span class="font-bold text-slate-800">🔑 錯誤代碼：</span><span id="diagnostic-code" class="text-rose-600 font-bold"></span></div>
+                        <div class="break-all"><span class="font-bold text-slate-800">💬 原始訊息：</span><span id="diagnostic-message"></span></div>
+                    </div>
+
+                    <div id="diagnostic-solution" class="bg-amber-50 border border-amber-100 p-4 rounded-2xl text-xs text-amber-800 space-y-2 leading-relaxed text-left">
+                        <!-- Solutions inject dynamically -->
+                    </div>
+
+                    <div class="flex gap-2.5 pt-2">
+                        <button onclick="document.getElementById('cloud-error-modal').remove()" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-xs font-bold transition-colors">
+                            關閉診斷
+                        </button>
+                        <button onclick="location.reload()" class="flex-1 bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold transition-colors">
+                            重新連線 🔄
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
         const contextEl = document.getElementById('diagnostic-context');
         const codeEl = document.getElementById('diagnostic-code');
         const msgEl = document.getElementById('diagnostic-message');
         const solutionEl = document.getElementById('diagnostic-solution');
 
-        if (!modal || !contextEl || !codeEl || !msgEl || !solutionEl) {
-            showToast(`雲端同步錯誤: ${error.message || error}`, 'danger');
-            return;
-        }
-
-        contextEl.innerText = context;
-        codeEl.innerText = error.code || 'unknown';
-        msgEl.innerText = error.message || error;
+        if (contextEl) contextEl.innerText = context;
+        if (codeEl) codeEl.innerText = error.code || 'permission-denied';
+        if (msgEl) msgEl.innerText = error.message || error;
 
         let solutionHtml = '';
         const code = (error.code || '').toLowerCase();
 
-        if (code === 'permission-denied') {
+        if (code === 'permission-denied' || error.message.includes('permission')) {
             solutionHtml = `
                 <p class="font-bold text-slate-800 text-[13px] mb-1">💡 排除方法：安全規則 (Rules) 未開放</p>
-                <p>您的 Firestore 拒絕了讀寫請求。請依照以下步驟開放權限：</p>
+                <p>您的 Firestore 目前正拒絕所有的讀寫請求，請依照以下步驟開放權限：</p>
                 <ol class="list-decimal pl-4 mt-1.5 space-y-1">
-                    <li>前往您的 <b>Firebase 後台</b> -> 進入 <b>Firestore Database</b>。</li>
+                    <li>前往您的 <b>Firebase 後台</b> (Firebase Console)。</li>
+                    <li>進入左側選單的 <b>Firestore Database</b>。</li>
                     <li>點選上方的 <b>「Rules」(規則)</b> 分頁。</li>
                     <li>將裡面的內容修改為允許所有人讀寫：</li>
                 </ol>
@@ -279,43 +314,21 @@ service cloud.firestore {
     }
   }
 }</pre>
-                <p class="mt-2 text-[10px] text-amber-900 font-bold">⚠️ 貼上後，務必點擊右上角的「Publish」(發布) 才能生效！</p>
+                <p class="mt-2 text-[10px] text-amber-900 font-bold">⚠️ 貼上後，務必點擊右上角的「Publish」(發布) 按鈕才能生效！</p>
             `;
         } else if (code === 'unauthenticated' || error.message.includes('auth')) {
             solutionHtml = `
                 <p class="font-bold text-slate-800 text-[13px] mb-1">💡 排除方法：未啟用「匿名登入」</p>
-                <p>由於您的安全規則可能需要驗證，但您尚未啟用匿名登入服務：</p>
-                <ol class="list-decimal pl-4 mt-1.5 space-y-1">
-                    <li>前往 <b>Firebase 後台</b> -> 進入 <b>Authentication</b>。</li>
-                    <li>點選 <b>Sign-in method</b> (登入方式)。</li>
-                    <li>在下方供應商找到 <b>「匿名 (Anonymous)」</b>。</li>
-                    <li>點進去開啟 <b>「啟用」</b> 並儲存。</li>
-                </ol>
-            `;
-        } else if (error.message.includes('database') || error.message.includes('not found')) {
-            solutionHtml = `
-                <p class="font-bold text-slate-800 text-[13px] mb-1">💡 排除方法：尚未建立 Firestore 資料庫</p>
-                <p>您的專案設定正確，但您似乎還沒有在後台初始化資料庫：</p>
-                <ol class="list-decimal pl-4 mt-1.5 space-y-1">
-                    <li>前往 <b>Firebase 後台</b> -> 點擊左側 <b>Firestore Database</b>。</li>
-                    <li>點擊中央的 <b>「建立資料庫 (Create database)」</b>。</li>
-                    <li>地點選擇靠近台灣的區域（如 asia-east1），並以測試模式啟動。</li>
-                </ol>
+                <p>請前往您的 <b>Firebase 後台</b> -> 進入 <b>Authentication</b> -> 點選 <b>Sign-in method</b>，啟用 <b>「匿名 (Anonymous)」</b> 後儲存即可。</p>
             `;
         } else {
             solutionHtml = `
                 <p class="font-bold text-slate-800 text-[13px] mb-1">💡 排除方法：網路或連線代碼不正確</p>
-                <p>請確認以下幾點：</p>
-                <ul class="list-disc pl-4 mt-1 space-y-1">
-                    <li>請確認您的行動裝置網路連線是否正常。</li>
-                    <li>請確認貼上的 <b>Firebase Config JSON</b> 與您在 Firebase 後台複製的完全一致，且沒有漏掉大括號。</li>
-                    <li>可以嘗試更換「同步共享代碼」重新載入。</li>
-                </ul>
+                <p>請檢查您的行動裝置網路連線是否正常，或重新貼上無缺漏大括號的 Firebase Config JSON。</p>
             `;
         }
 
-        solutionEl.innerHTML = solutionHtml;
-        modal.classList.remove('hidden');
+        if (solutionEl) solutionEl.innerHTML = solutionHtml;
     }
 
     function setupFirestoreListeners() {
@@ -471,10 +484,10 @@ service cloud.firestore {
             
             if (tabView === viewName) {
                 if (icon) icon.className = icon.className.replace('text-slate-400', 'text-brand-living font-bold');
-                if (text) text.className = "text-xs text-brand-living font-bold";
+                if (text) text.className = "text-[11px] text-brand-living font-bold mt-0.5";
             } else {
                 if (icon) icon.className = icon.className.replace('text-brand-living font-bold', 'text-slate-400');
-                if (text) text.className = "text-xs text-slate-400";
+                if (text) text.className = "text-[11px] text-slate-400 mt-0.5";
             }
         });
 
@@ -2755,6 +2768,33 @@ service cloud.firestore {
     <a href="#" onclick="switchView('settings')" data-view="settings" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
         <i class="fa-solid fa-gear text-lg"></i>
         <span class="text-xs mt-0.5">成員設定</span>
+    </a>
+</nav>
+-->
+<nav class="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 grid grid-cols-5 items-center py-2 z-40 shadow-lg rounded-t-2xl pb-safe">
+    <a href="#" onclick="switchView('home')" data-view="home" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+        <i class="fa-solid fa-chart-pie text-lg text-brand-living font-bold"></i>
+        <span class="text-[11px] text-brand-living font-bold mt-0.5">首頁</span>
+    </a>
+    <a href="#" onclick="switchView('records')" data-view="records" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+        <i class="fa-solid fa-list-ul text-lg"></i>
+        <span class="text-[11px] mt-0.5">明細</span>
+    </a>
+    
+    <!-- Floating Quick Add Button (Centered mathematically in grid column 3) -->
+    <div class="relative h-10 flex items-center justify-center">
+        <button id="quick-add-fab" class="absolute -top-7 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-gradient-to-tr from-brand-living via-sky-500 to-brand-rabbit text-white flex items-center justify-center text-2xl shadow-xl border-4 border-white select-none hover:brightness-110 active:scale-95 transition-all z-50">
+            <i class="fa-solid fa-plus"></i>
+        </button>
+    </div>
+
+    <a href="#" onclick="switchView('ai-chat')" data-view="ai-chat" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+        <i class="fa-solid fa-wand-magic-sparkles text-lg"></i>
+        <span class="text-[11px] mt-0.5">AI 助理</span>
+    </a>
+    <a href="#" onclick="switchView('settings')" data-view="settings" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+        <i class="fa-solid fa-gear text-lg"></i>
+        <span class="text-[11px] mt-0.5">成員設定</span>
     </a>
 </nav>
 
