@@ -192,8 +192,8 @@
         theme: localStorage.getItem('ledger_theme') || 'light',
         currentView: 'home',
         syncCode: localStorage.getItem('ledger_sync_code') || 'LOVERABBIT2026',
-        currentUser: localStorage.getItem('ledger_user_name') || '女友小美',
-        partnerUser: localStorage.getItem('ledger_partner_name') || '男友阿明',
+        currentUser: localStorage.getItem('ledger_user_name') || 'Momo',
+        partnerUser: localStorage.getItem('ledger_partner_name') || 'Way',
         customGeminiKey: localStorage.getItem('custom_gemini_key') || '',
         records: [],
         categories: [],
@@ -487,8 +487,34 @@ service cloud.firestore {
             });
         });
 
+        // Dynamic binding: Populate filter and template payer options with Way and Momo
+        updateDynamicPayerDropdowns();
+
         loadLocalData();
         renderAiChatHistory();
+    }
+
+    function updateDynamicPayerDropdowns() {
+        // Update Advanced Filter Payer Dropdown
+        const filterPayerSelect = document.getElementById('filter-payer');
+        if (filterPayerSelect) {
+            filterPayerSelect.innerHTML = `
+                <option value="all">所有人</option>
+                <option value="共同分攤">共同分攤</option>
+                <option value="${state.currentUser}">${state.currentUser}</option>
+                <option value="${state.partnerUser}">${state.partnerUser}</option>
+            `;
+        }
+
+        // Update Add Template Payer Dropdown
+        const tempPayerSelect = document.getElementById('temp-modal-payer');
+        if (tempPayerSelect) {
+            tempPayerSelect.innerHTML = `
+                <option value="共同分攤">共同分攤</option>
+                <option value="${state.currentUser}">${state.currentUser}</option>
+                <option value="${state.partnerUser}">${state.partnerUser}</option>
+            `;
+        }
     }
 
     function updateDatabaseStatusPill() {
@@ -782,33 +808,6 @@ service cloud.firestore {
         }, 120);
     };
 
-    function renderRecentRecords(records) {
-        const container = document.getElementById('recent-records-container');
-        if (!container) return;
-
-        const recent = [...records].sort((a, b) => {
-            const dateCompare = new Date(b.date) - new Date(a.date);
-            if (dateCompare !== 0) return dateCompare;
-            return (b.createdAt || 0) - (a.createdAt || 0);
-        }).slice(0, 5);
-
-        if (recent.length === 0) {
-            container.innerHTML = `
-                <div class="text-center py-8 bg-white dark:bg-zinc-900 rounded-2xl border border-slate-100 dark:border-zinc-800 w-full">
-                    <img src="https://placehold.co/100x100/f8fafc/94a3b8?text=🐾" class="mx-auto rounded-full mb-3 opacity-60 dark:opacity-35" alt="No records">
-                    <p class="text-slate-400 dark:text-zinc-500 text-sm">本月尚無任何收支紀錄</p>
-                    <button onclick="switchView('add')" class="mt-3 text-xs bg-brand-living text-white px-4 py-2 rounded-lg font-bold">手刀新增第一筆</button>
-                </div>
-            `;
-        } else {
-            container.innerHTML = `
-                <div class="space-y-2.5">
-                    ${recent.map(r => renderRecordRowHtml(r)).join('')}
-                </div>
-            `;
-        }
-    }
-
     function renderRecordRowHtml(r) {
         const isRabbit = r.account === 'rabbit';
         const isIncome = r.type === 'income';
@@ -865,6 +864,33 @@ service cloud.firestore {
                 </div>
             </div>
         `;
+    }
+
+    function renderRecentRecords(records) {
+        const container = document.getElementById('recent-records-container');
+        if (!container) return;
+
+        const recent = [...records].sort((a, b) => {
+            const dateCompare = new Date(b.date) - new Date(a.date);
+            if (dateCompare !== 0) return dateCompare;
+            return (b.createdAt || 0) - (a.createdAt || 0);
+        }).slice(0, 5);
+
+        if (recent.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8 bg-white dark:bg-zinc-900 rounded-2xl border border-slate-100 dark:border-zinc-800 w-full">
+                    <img src="https://placehold.co/100x100/f8fafc/94a3b8?text=🐾" class="mx-auto rounded-full mb-3 opacity-60 dark:opacity-35" alt="No records">
+                    <p class="text-slate-400 dark:text-zinc-500 text-sm">本月尚無任何收支紀錄</p>
+                    <button onclick="switchView('add')" class="mt-3 text-xs bg-brand-living text-white px-4 py-2 rounded-lg font-bold">手刀新增第一筆</button>
+                </div>
+            `;
+        } else {
+            container.innerHTML = `
+                <div class="space-y-2.5">
+                    ${recent.map(r => renderRecordRowHtml(r)).join('')}
+                </div>
+            `;
+        }
     }
 
     window.viewAttachments = function(id, event) {
@@ -1678,7 +1704,7 @@ service cloud.firestore {
 
         document.getElementById('stat-highest-category').innerHTML = highestCatVal > 0 
             ? `<span class="bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 px-3 py-1 rounded-full font-bold text-sm border border-rose-100 dark:border-rose-900/60">${highestCatName} (${formatCurrency(highestCatVal)})</span>`
-            : `<span class="text-slate-400 dark:text-slate-500 text-sm">本月無支出</span>`;
+            : `<span class="text-slate-400 dark:text-zinc-500 text-sm">本月無支出</span>`;
 
         if (livingChartInstance) livingChartInstance.destroy();
         if (rabbitChartInstance) rabbitChartInstance.destroy();
@@ -1998,6 +2024,9 @@ service cloud.firestore {
         localStorage.setItem('ledger_user_name', state.currentUser);
         localStorage.setItem('ledger_partner_name', state.partnerUser);
 
+        // Update name references inside dropdown menus dynamically
+        updateDynamicPayerDropdowns();
+
         showToast('設定已儲存！', 'success');
 
         if (syncChanged) {
@@ -2239,14 +2268,15 @@ service cloud.firestore {
                                 }
                             } else {
                                 state.syncCode = parsed.syncCode;
-                                state.currentUser = parsed.currentUser || '男友阿明';
-                                state.partnerUser = parsed.partnerUser || '女友小美';
+                                state.currentUser = parsed.currentUser || 'Momo';
+                                state.partnerUser = parsed.partnerUser || 'Way';
                                 state.records = parsed.records;
                                 state.categories = parsed.categories;
                                 state.templates = parsed.templates;
                                 saveLocalData();
                             }
 
+                            updateDynamicPayerDropdowns();
                             showToast('備份資料已成功恢復並套用！', 'success');
                             renderApp();
                         } catch (err) {
@@ -2526,14 +2556,14 @@ service cloud.firestore {
 
 </script>
 
-<header class="bg-white dark:bg-zinc-900 shadow-sm border-b border-slate-100 dark:border-zinc-800 sticky top-0 z-40 px-4 py-3 flex items-center justify-between transition-colors">
+<header class="bg-white dark:bg-zinc-900 shadow-sm border-b border-slate-100 dark:border-zinc-850 sticky top-0 z-40 px-4 py-3 flex items-center justify-between transition-colors">
     <div class="flex items-center gap-2">
         <div class="w-10 h-10 bg-gradient-to-tr from-brand-living to-brand-rabbit rounded-xl flex items-center justify-center text-white shadow-md shrink-0">
             <i class="fa-solid fa-paw text-lg animate-pulse"></i>
         </div>
         <div>
             <h1 class="text-base font-black tracking-tight text-slate-800 dark:text-zinc-100 flex items-center gap-1.5">
-                雙兔生活記帳 <span class="text-xs font-normal text-slate-400 dark:text-zinc-500 hidden sm:inline">雙人記帳好助手</span>
+                雙兔生活記帳 <span class="text-xs font-normal text-slate-400 dark:text-zinc-550 hidden sm:inline">雙人記帳好助手</span>
             </h1>
             <div id="header-sync-badge" class="text-[10px] text-slate-500 dark:text-zinc-400 flex items-center gap-1 font-semibold mt-0.5">
                 <i class="fa-solid fa-users"></i> 載入中...
@@ -2576,7 +2606,7 @@ service cloud.firestore {
                     <h4 class="text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5">
                         起粑 AI 記帳分析助理上線囉！
                     </h4>
-                    <p class="text-[10px] text-slate-500 dark:text-zinc-400 truncate mt-0.5">點此快速診斷本月花費比例、存超支分析與照護省錢指南 🐾</p>
+                    <p class="text-[10px] text-slate-500 dark:text-zinc-400 truncate mt-0.5">點此快速診斷本月花費比例、存超支 analysis 🐾</p>
                 </div>
             </div>
             <i class="fa-solid fa-angle-right text-xs text-orange-500 shrink-0 ml-2"></i>
@@ -2635,12 +2665,12 @@ service cloud.firestore {
                         <p id="home-total-income" class="text-base font-extrabold text-slate-800 dark:text-zinc-100">$0</p>
                     </div>
                 </div>
-                <span class="text-xs text-slate-400 dark:text-zinc-500 font-medium">薪資、兼職與其他</span>
+                <span class="text-xs text-slate-400 dark:text-zinc-505 font-medium">薪資、兼職與其他</span>
             </div>
         </div>
 
         <div class="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-2 transition-all">
-            <h4 class="text-xs font-bold text-slate-400 dark:text-zinc-500 flex items-center gap-1">
+            <h4 class="text-xs font-bold text-slate-400 dark:text-zinc-505 flex items-center gap-1">
                 <i class="fa-solid fa-chart-line"></i> 收支差異 analysis
             </h4>
             <div id="mom-comparison-text" class="pt-1">
@@ -2653,7 +2683,7 @@ service cloud.firestore {
                 <h3 class="text-sm font-bold text-slate-600 dark:text-zinc-300 flex items-center gap-1.5">
                     <i class="fa-solid fa-wand-magic-sparkles text-brand-living"></i> 常用項目快速記帳
                 </h3>
-                <span class="text-[10px] text-slate-400 dark:text-zinc-500">點按立即帶入</span>
+                <span class="text-[10px] text-slate-400 dark:text-zinc-550">點按立即帶入</span>
             </div>
             <div id="quick-templates-container" class="flex gap-2 overflow-x-auto pb-1.5 hide-scrollbar w-full"></div>
         </div>
@@ -2726,8 +2756,8 @@ service cloud.firestore {
                     <select id="filter-payer" onchange="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2.5 py-2 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
                         <option value="all">所有人</option>
                         <option value="共同分攤">共同分攤</option>
-                        <option value="男友阿明">男友阿明</option>
-                        <option value="女友小美">女友小美</option>
+                        <option value="Way">Way</option>
+                        <option value="Momo">Momo</option>
                     </select>
                 </div>
                 <div>
@@ -2806,7 +2836,7 @@ service cloud.firestore {
                 <div id="channel-field-wrapper" class="hidden">
                     <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5 flex items-center gap-1.5">
                         🛒 購買通路/商店
-                        <span class="text-[10px] font-normal text-slate-400 dark:text-zinc-500">（例如：蝦皮、牧草圓頂、寵物公園）</span>
+                        <span class="text-[10px] font-normal text-slate-400 dark:text-zinc-550">（例如：蝦皮、牧草圓頂、寵物公園）</span>
                     </label>
                     <input type="text" id="rec-channel" placeholder="請輸入店名、平台或院所名稱" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium text-slate-800 dark:text-zinc-100">
                 </div>
@@ -2909,23 +2939,23 @@ service cloud.firestore {
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm flex flex-col justify-between transition-colors">
-                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-500 mb-3 uppercase tracking-wider">生活開銷類別占比</h3>
+                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-550 mb-3 uppercase tracking-wider">生活開銷類別占比</h3>
                 <div class="relative h-60 flex items-center justify-center w-full">
                     <canvas id="chart-living-cats" class="w-full h-full"></canvas>
-                    <div id="living-chart-fallback" class="hidden text-slate-400 dark:text-zinc-500 text-xs text-center py-10 w-full">此月份無生活開銷</div>
+                    <div id="living-chart-fallback" class="hidden text-slate-400 dark:text-zinc-550 text-xs text-center py-10 w-full">此月份無生活開銷</div>
                 </div>
             </div>
 
             <div class="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm flex flex-col justify-between transition-colors">
-                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-500 mb-3 uppercase tracking-wider">起粑開銷類別占比</h3>
+                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-550 mb-3 uppercase tracking-wider">起粑開銷類別占比</h3>
                 <div class="relative h-60 flex items-center justify-center w-full">
                     <canvas id="chart-rabbit-cats" class="w-full h-full"></canvas>
-                    <div id="rabbit-chart-fallback" class="hidden text-slate-400 dark:text-zinc-500 text-xs text-center py-10 w-full">此月份無起粑開銷</div>
+                    <div id="rabbit-chart-fallback" class="hidden text-slate-400 dark:text-zinc-550 text-xs text-center py-10 w-full">此月份無起粑開銷</div>
                 </div>
             </div>
 
             <div class="col-span-1 md:col-span-2 bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm transition-colors">
-                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-500 mb-3 uppercase tracking-wider">當月每日支出趨勢</h3>
+                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-550 mb-3 uppercase tracking-wider">當月每日支出趨勢</h3>
                 <div class="h-44 w-full">
                     <canvas id="chart-daily-trend" class="w-full h-full"></canvas>
                 </div>
@@ -3017,7 +3047,7 @@ service cloud.firestore {
                 <div>
                     <label class="block text-[11px] font-black text-slate-400 dark:text-zinc-500 mb-1">Gemini API Key</label>
                     <input type="password" id="gemini-key-input" placeholder="AIzaSy..." class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-xs font-mono focus:ring-1 focus:ring-brand-living outline-none">
-                    <p class="text-[9px] text-slate-400 dark:text-zinc-500 mt-1">💡 您可以前往 Google AI Studio 免費申請個人專屬的 Gemini API Key。</p>
+                    <p class="text-[9px] text-slate-400 dark:text-zinc-550 mt-1">💡 您可以前往 Google AI Studio 免費申請個人專屬的 Gemini API Key。</p>
                 </div>
                 <div class="flex gap-2">
                     <button onclick="saveCustomGeminiKey()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl text-xs font-black transition-colors">
@@ -3073,17 +3103,17 @@ service cloud.firestore {
                     <div class="flex gap-2">
                         <input type="text" id="sync-code-input" placeholder="LOVERABBIT2026" class="flex-grow bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm font-extrabold tracking-wide focus:ring-1 focus:ring-brand-living outline-none">
                     </div>
-                    <p class="text-[10px] text-slate-400 dark:text-zinc-500 mt-1">💡 當你與女友輸入相同的代碼時，就可以在不同手機上同時讀取與新增相同的記帳資料。</p>
+                    <p class="text-[10px] text-slate-400 dark:text-zinc-550 mt-1">💡 當你與女友輸入相同的代碼時，就可以在不同手機上同時讀取與新增相同的記帳資料。</p>
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">主記帳人（您自己）</label>
-                        <input type="text" id="user-name-input" placeholder="女友小美" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm font-semibold focus:ring-1 focus:ring-brand-living outline-none">
+                        <input type="text" id="user-name-input" placeholder="Momo" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm font-semibold focus:ring-1 focus:ring-brand-living outline-none">
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">第二成員（您的伴侶）</label>
-                        <input type="text" id="partner-name-input" placeholder="男友阿明" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm font-semibold focus:ring-1 focus:ring-brand-living outline-none">
+                        <input type="text" id="partner-name-input" placeholder="Way" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm font-semibold focus:ring-1 focus:ring-brand-living outline-none">
                     </div>
                 </div>
 
@@ -3109,13 +3139,13 @@ service cloud.firestore {
                 <button onclick="backupLocalJSON()" class="flex flex-col items-center justify-center p-3.5 bg-slate-50 dark:bg-zinc-800 hover:bg-slate-100 dark:hover:bg-zinc-700 border border-slate-100 dark:border-zinc-700 rounded-xl transition-colors cursor-pointer text-center group">
                     <i class="fa-solid fa-cloud-arrow-down text-slate-400 group-hover:text-brand-living text-xl shrink-0"></i>
                     <span class="text-xs font-bold text-slate-600 dark:text-zinc-300 mt-1.5">匯出備份檔案</span>
-                    <span class="text-[9px] text-slate-400 dark:text-zinc-500 mt-0.5">下載為 JSON 檔</span>
+                    <span class="text-[9px] text-slate-400 dark:text-zinc-550 mt-0.5">下載為 JSON 檔</span>
                 </button>
 
                 <label class="flex flex-col items-center justify-center p-3.5 bg-slate-50 dark:bg-zinc-800 hover:bg-slate-100 dark:hover:bg-zinc-700 border border-slate-100 dark:border-zinc-700 rounded-xl transition-colors cursor-pointer text-center group">
                     <i class="fa-solid fa-file-import text-slate-400 group-hover:text-brand-living text-xl shrink-0"></i>
                     <span class="text-xs font-bold text-slate-600 dark:text-zinc-300 mt-1.5">匯入備份檔案</span>
-                    <span class="text-[9px] text-slate-400 dark:text-zinc-500 mt-0.5">讀取備份資料</span>
+                    <span class="text-[9px] text-slate-400 dark:text-zinc-550 mt-0.5">讀取備份資料</span>
                     <input type="file" accept=".json" onchange="restoreLocalJSON(event)" class="hidden">
                 </label>
             </div>
@@ -3166,12 +3196,12 @@ service cloud.firestore {
                     <p class="text-[10px] text-slate-400 dark:text-zinc-500">收支項目查閱詳情</p>
                 </div>
             </div>
-            <button onclick="closeRecordActionMenu()" class="text-slate-400 dark:text-zinc-500 hover:text-slate-600 dark:hover:text-zinc-300 p-1.5"><i class="fa-solid fa-xmark text-lg"></i></button>
+            <button onclick="closeRecordActionMenu()" class="text-slate-400 dark:text-zinc-550 hover:text-slate-600 dark:hover:text-zinc-300 p-1.5"><i class="fa-solid fa-xmark text-lg"></i></button>
         </div>
 
         <!-- Large Price representation -->
         <div class="text-center py-2">
-            <p class="text-[10px] font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">交易金額</p>
+            <p class="text-[10px] font-bold text-slate-400 dark:text-zinc-550 uppercase tracking-wider">交易金額</p>
             <h2 id="ins-amount" class="text-2xl font-black text-slate-800 dark:text-zinc-100 mt-0.5">-NT$0</h2>
         </div>
 
@@ -3180,19 +3210,19 @@ service cloud.firestore {
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">📅 消費日期</span><span id="ins-val-date" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">💼 所屬帳本</span><span id="ins-val-account" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">↕️ 交易類型</span><span id="ins-val-type" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
-            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">👤 付款/交易人</span><span id="ins-val-payer" class="font-semibold text-slate-880 dark:text-zinc-200"></span></div>
-            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">💳 付款方式</span><span id="ins-val-method" class="font-semibold text-slate-880 dark:text-zinc-200"></span></div>
-            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">📝 登入/修改人</span><span id="ins-val-creator" class="font-semibold text-slate-880 dark:text-zinc-200"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">👤 付款/交易人</span><span id="ins-val-payer" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">💳 付款方式</span><span id="ins-val-method" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">📝 登入/修改人</span><span id="ins-val-creator" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
             
             <!-- Dynamic channel row inside details dialog -->
             <div id="ins-row-channel" class="flex justify-between hidden"><span class="font-bold text-slate-400 dark:text-zinc-500">🛒 購買通路/商店</span><span id="ins-val-channel" class="font-semibold text-amber-600 dark:text-amber-400"></span></div>
             
-            <div class="flex flex-col pt-1.5 border-t border-slate-200/60 dark:border-zinc-700/60"><span class="font-bold text-slate-400 dark:text-zinc-500 mb-1">💬 備註說明</span><p id="ins-val-notes" class="text-slate-700 dark:text-zinc-300 bg-white dark:bg-zinc-900 p-2.5 rounded-lg border border-slate-200/50 dark:border-zinc-700/50 leading-relaxed font-medium break-all"></p></div>
+            <div class="flex flex-col pt-1.5 border-t border-slate-200/60 dark:border-zinc-700/60"><span class="font-bold text-slate-400 dark:text-zinc-550 mb-1">💬 備註說明</span><p id="ins-val-notes" class="text-slate-700 dark:text-zinc-300 bg-white dark:bg-zinc-900 p-2.5 rounded-lg border border-slate-200/50 dark:border-zinc-700/50 leading-relaxed font-medium break-all"></p></div>
         </div>
 
         <!-- Image Attachment Section -->
         <div id="ins-attachments-section" class="space-y-2 hidden">
-            <h4 class="text-xs font-bold text-slate-400 dark:text-zinc-500 flex items-center gap-1"><i class="fa-solid fa-paperclip"></i> 收據與照片憑證</h4>
+            <h4 class="text-xs font-bold text-slate-400 dark:text-zinc-550 flex items-center gap-1"><i class="fa-solid fa-paperclip"></i> 收據與照片憑證</h4>
             <div id="ins-attachments-container" class="flex gap-2 overflow-x-auto hide-scrollbar py-1"></div>
         </div>
 
@@ -3328,8 +3358,8 @@ service cloud.firestore {
                 <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1">預設付款人</label>
                 <select id="temp-modal-payer" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
                     <option value="共同分攤">共同分攤</option>
-                    <option value="男友阿明">男友阿明</option>
-                    <option value="女友小美">女友小美</option>
+                    <option value="Way">Way</option>
+                    <option value="Momo">Momo</option>
                 </select>
             </div>
             <div>
@@ -3392,6 +3422,36 @@ service cloud.firestore {
 <div id="global-loader" class="fixed inset-0 bg-black/30 backdrop-blur-[1px] z-50 flex flex-col items-center justify-center gap-3 hidden">
     <div class="w-11 h-11 border-4 border-white/30 border-t-brand-living rounded-full animate-spin"></div>
     <span class="text-white text-xs font-bold tracking-wider">正在處理雲端同步中...</span>
+</div>
+
+<div id="cloud-error-modal" class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white dark:bg-zinc-900 w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl overflow-y-auto max-h-[90vh]" onclick="event.stopPropagation()">
+        <div class="text-center space-y-2">
+            <div class="w-14 h-14 bg-rose-50 dark:bg-rose-950/30 text-rose-500 rounded-full flex items-center justify-center text-2xl mx-auto">
+                <i class="fa-solid fa-cloud-bounce animate-bounce"></i>
+            </div>
+            <h3 class="font-black text-slate-800 dark:text-zinc-100 text-base">☁️ Firebase 雲端連線診斷助手</h3>
+            <p class="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">偵測到雲端資料庫回傳錯誤，請參考下方引導快速排除問題：</p>
+        </div>
+
+        <div class="bg-slate-50 dark:bg-zinc-800 p-3.5 rounded-2xl border border-slate-100 dark:border-zinc-700 text-left space-y-1.5 font-mono text-[11px] text-slate-600 dark:text-zinc-300">
+            <div><span class="font-bold text-slate-800 dark:text-zinc-100">📌 錯誤來源：</span><span id="diagnostic-context">載入帳目明細</span></div>
+            <div><span class="font-bold text-slate-800 dark:text-zinc-100">🔑 錯誤代碼：</span><span id="diagnostic-code" class="text-rose-600 font-bold">無</span></div>
+            <div class="break-all"><span class="font-bold text-slate-800 dark:text-zinc-100">💬 原始訊息：</span><span id="diagnostic-message">無</span></div>
+        </div>
+
+        <div id="diagnostic-solution" class="bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 p-4 rounded-2xl text-xs text-amber-800 dark:text-amber-300 space-y-2 leading-relaxed">
+        </div>
+
+        <div class="flex gap-2.5 pt-2">
+            <button onclick="document.getElementById('cloud-error-modal').classList.add('hidden')" class="flex-1 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-200 py-2.5 rounded-xl text-xs font-bold transition-colors">
+                關閉診斷
+            </button>
+            <button onclick="location.reload()" class="flex-1 bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-xl text-xs font-bold transition-colors">
+                重新連線 🔄
+            </button>
+        </div>
+    </div>
 </div>
 
 </body>
