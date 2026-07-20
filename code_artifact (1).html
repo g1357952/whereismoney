@@ -1,0 +1,2728 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雙人生活記帳 🐾 兩人與起粑的智能帳本</title>
+    <!-- Tailwind CSS for modern design -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome for high-quality icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js for beautiful charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Google Fonts: Inter & Noto Sans TC -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans TC', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            living: '#0ea5e9', // Sky blue for Living Expense
+                            livingDark: '#0284c7',
+                            rabbit: '#f97316', // Orange for Rabbit Expense
+                            rabbitDark: '#ea580c',
+                            accent: '#10b981', // Emerald for general success/income
+                            bg: '#f8fafc',
+                        }
+                    },
+                    borderRadius: {
+                        '4xl': '2rem',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        /* Mobile-friendly active state */
+        .active-tab {
+            color: #0ea5e9;
+        }
+        .active-tab-rabbit {
+            color: #f97316;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col pb-20 md:pb-0">
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // Firebase Global Variables
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'shared-ledger-2026';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+        apiKey: "",
+        authDomain: "mock-auth-domain.firebaseapp.com",
+        projectId: "mock-project-id",
+        storageBucket: "mock-storage-bucket.appspot.com",
+        messagingSenderId: "123456789",
+        appId: "1:123456789:web:123456"
+    };
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    let app, db, auth;
+    let isFirebaseReady = false;
+
+    // Local Storage Fallbacks if Firebase isn't configured
+    let localRecords = JSON.parse(localStorage.getItem('ledger_records') || '[]');
+    let localCategories = JSON.parse(localStorage.getItem('ledger_categories') || '[]');
+    let localTemplates = JSON.parse(localStorage.getItem('ledger_templates') || '[]');
+
+    async function initFirebase() {
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            // Auth Priority: Custom Token -> Anonymous Auth
+            if (initialAuthToken) {
+                await signInWithCustomToken(auth, initialAuthToken);
+            } else {
+                await signInAnonymously(auth);
+            }
+            isFirebaseReady = true;
+            showToast('雲端資料庫連線成功！資料已同步。', 'success');
+            setupFirestoreListeners();
+        } catch (error) {
+            console.warn("Firebase Init failed, running in local-first mode:", error);
+            isFirebaseReady = false;
+            showToast('雲端連線失敗，目前為離線本機模式。', 'warning');
+            loadLocalData();
+        }
+    }
+
+    window.addEventListener('load', () => {
+        initFirebase();
+        initializeAppState();
+    });
+
+    // App state management
+    const state = {
+        currentView: 'home', // 'home' | 'records' | 'add' | 'stats' | 'categories' | 'settings' | 'ai-chat'
+        syncCode: localStorage.getItem('ledger_sync_code') || 'LOVERABBIT2026',
+        currentUser: localStorage.getItem('ledger_user_name') || '女友小美',
+        partnerUser: localStorage.getItem('ledger_partner_name') || '男友阿明',
+        records: [],
+        categories: [],
+        templates: [],
+        selectedMonth: new Date().toISOString().substring(0, 7), // YYYY-MM
+        editId: null, // For editing existing records
+        copyId: null, // For copying
+        isUploading: false,
+        chatHistory: [
+            {
+                role: 'assistant',
+                text: '哈囉！我是你們的雙兔 AI 記帳小幫手 🐰✨！不論是想分析最近生活開銷有沒有超支，還是想了解愛兔起粑🐰（像是牧草、飼料、健檢）的花費是否合理，都可以直接問我喔！點選下方的「📊 診斷本月收支」或「🌾 起粑開銷合適度」我也能立刻替你們做個財務體檢！'
+            }
+        ]
+    };
+
+    // Default Categories if empty
+    const defaultCategories = [
+        // Living Account Categories
+        { id: 'c1', account: 'living', type: 'expense', name: '外食晚餐', icon: 'fa-utensils', color: '#0ea5e9' },
+        { id: 'c2', account: 'living', type: 'expense', name: '日常飲料', icon: 'fa-glass-water', color: '#38bdf8' },
+        { id: 'c3', account: 'living', type: 'expense', name: '買菜下廚', icon: 'fa-carrot', color: '#22c55e' },
+        { id: 'c4', account: 'living', type: 'expense', name: '居家生活用品', icon: 'fa-house-chimney', color: '#6366f1' },
+        { id: 'c5', account: 'living', type: 'expense', name: '大眾交通與加油', icon: 'fa-car', color: '#a855f7' },
+        { id: 'c6', account: 'living', type: 'expense', name: '情侶娛樂與約會', icon: 'fa-film', color: '#ec4899' },
+        { id: 'c7', account: 'living', type: 'expense', name: '其他生活雜支', icon: 'fa-ellipsis', color: '#64748b' },
+        { id: 'c8', account: 'living', type: 'income', name: '薪資收入', icon: 'fa-wallet', color: '#10b981' },
+        { id: 'c9', account: 'living', type: 'income', name: '其他收入', icon: 'fa-coins', color: '#84cc16' },
+        
+        // Rabbit Account Categories
+        { id: 'c10', account: 'rabbit', type: 'expense', name: '起粑牧草', icon: 'fa-seedling', color: '#f97316' },
+        { id: 'c11', account: 'rabbit', type: 'expense', name: '起粑飼料', icon: 'fa-bowl-food', color: '#fdba74' },
+        { id: 'c12', account: 'rabbit', type: 'expense', name: '起粑零食', icon: 'fa-cookie', color: '#fb923c' },
+        { id: 'c13', account: 'rabbit', type: 'expense', name: '起粑醫療健檢', icon: 'fa-stethoscope', color: '#ef4444' },
+        { id: 'c14', account: 'rabbit', type: 'expense', name: '起粑美容剃毛', icon: 'fa-scissors', color: '#ec4899' },
+        { id: 'c15', account: 'rabbit', type: 'expense', name: '起粑用品玩具', icon: 'fa-bone', color: '#14b8a6' },
+        { id: 'c16', account: 'rabbit', type: 'expense', name: '起粑寄宿託管', icon: 'fa-hotel', color: '#8b5cf6' },
+        { id: 'c17', account: 'rabbit', type: 'expense', name: '起粑其他雜支', icon: 'fa-ellipsis', color: '#64748b' }
+    ];
+
+    // Default Templates
+    const defaultTemplates = [
+        { id: 't1', title: '全家大罐鮮乳', account: 'living', type: 'expense', amount: 185, category: '居家生活用品', payer: '共同分攤', payMethod: '電子支付' },
+        { id: 't2', title: '雙人巷口排骨飯', account: 'living', type: 'expense', amount: 240, category: '外食晚餐', payer: '共同分攤', payMethod: '現金' },
+        { id: 't3', title: '起粑甜燕麥草5KG', account: 'rabbit', type: 'expense', amount: 850, category: '起粑牧草', payer: '共同分攤', payMethod: '轉帳' },
+        { id: 't4', title: '起粑提摩西一號牧草', account: 'rabbit', type: 'expense', amount: 350, category: '起粑牧草', payer: '共同分攤', payMethod: '信用卡' }
+    ];
+
+    function loadLocalData() {
+        if (!localStorage.getItem('ledger_categories')) {
+            localStorage.setItem('ledger_categories', JSON.stringify(defaultCategories));
+            state.categories = defaultCategories;
+        } else {
+            state.categories = localCategories;
+        }
+
+        if (!localStorage.getItem('ledger_templates')) {
+            localStorage.setItem('ledger_templates', JSON.stringify(defaultTemplates));
+            state.templates = defaultTemplates;
+        } else {
+            state.templates = localTemplates;
+        }
+
+        state.records = localRecords;
+        renderApp();
+    }
+
+    function saveLocalData() {
+        localStorage.setItem('ledger_records', JSON.stringify(state.records));
+        localStorage.setItem('ledger_categories', JSON.stringify(state.categories));
+        localStorage.setItem('ledger_templates', JSON.stringify(state.templates));
+    }
+
+    let unsubscribeRecords = null;
+    let unsubscribeCategories = null;
+    let unsubscribeTemplates = null;
+
+    function setupFirestoreListeners() {
+        if (!isFirebaseReady) return;
+
+        // Clean existing listeners if any
+        if (unsubscribeRecords) unsubscribeRecords();
+        if (unsubscribeCategories) unsubscribeCategories();
+        if (unsubscribeTemplates) unsubscribeTemplates();
+
+        showLoading(true);
+
+        const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'records');
+        const categoriesCol = collection(db, 'artifacts', appId, 'public', 'data', 'categories');
+        const templatesCol = collection(db, 'artifacts', appId, 'public', 'data', 'templates');
+
+        unsubscribeRecords = onSnapshot(recordsCol, (snapshot) => {
+            const allRecords = [];
+            snapshot.forEach(doc => {
+                allRecords.push({ id: doc.id, ...doc.data() });
+            });
+            state.records = allRecords.filter(r => r.bookId === state.syncCode);
+            saveLocalData();
+            renderApp();
+            showLoading(false);
+        }, (error) => {
+            console.error("Snapshot error on records:", error);
+            showToast("載入雲端資料錯誤，請重新整理", "danger");
+            showLoading(false);
+        });
+
+        unsubscribeCategories = onSnapshot(categoriesCol, (snapshot) => {
+            const list = [];
+            snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+            
+            const filtered = list.filter(c => c.bookId === state.syncCode);
+            if (filtered.length === 0) {
+                initializeCloudDefaults();
+            } else {
+                state.categories = filtered;
+                saveLocalData();
+                renderApp();
+            }
+        }, (error) => console.error("Categories snapshot error:", error));
+
+        unsubscribeTemplates = onSnapshot(templatesCol, (snapshot) => {
+            const list = [];
+            snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+            state.templates = list.filter(t => t.bookId === state.syncCode);
+            if (state.templates.length === 0 && localTemplates.length === 0) {
+                state.templates = defaultTemplates;
+            }
+            saveLocalData();
+            renderApp();
+        }, (error) => console.error("Templates snapshot error:", error));
+    }
+
+    async function initializeCloudDefaults() {
+        if (!isFirebaseReady) return;
+        try {
+            const categoriesCol = collection(db, 'artifacts', appId, 'public', 'data', 'categories');
+            for (let cat of defaultCategories) {
+                await addDoc(categoriesCol, {
+                    ...cat,
+                    bookId: state.syncCode
+                });
+            }
+            const templatesCol = collection(db, 'artifacts', appId, 'public', 'data', 'templates');
+            for (let temp of defaultTemplates) {
+                await addDoc(templatesCol, {
+                    ...temp,
+                    bookId: state.syncCode
+                });
+            }
+        } catch (e) {
+            console.error("Error setting cloud defaults:", e);
+        }
+    }
+
+    function initializeAppState() {
+        const syncInput = document.getElementById('sync-code-input');
+        if (syncInput) syncInput.value = state.syncCode;
+
+        const userInput = document.getElementById('user-name-input');
+        if (userInput) userInput.value = state.currentUser;
+
+        const partnerInput = document.getElementById('partner-name-input');
+        if (partnerInput) partnerInput.value = state.partnerUser;
+
+        // View event listeners for bottom/top navigation
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                e.preventDefault();
+                const view = tab.getAttribute('data-view');
+                switchView(view);
+            });
+        });
+
+        const quickAddBtn = document.getElementById('quick-add-fab');
+        if (quickAddBtn) {
+            quickAddBtn.addEventListener('click', () => {
+                resetRecordForm();
+                switchView('add');
+            });
+        }
+
+        loadLocalData();
+        renderAiChatHistory();
+    }
+
+    function switchView(viewName) {
+        state.currentView = viewName;
+        
+        // Hide all views
+        document.querySelectorAll('.app-view').forEach(view => {
+            view.classList.add('hidden');
+        });
+
+        // Show targets
+        const targetView = document.getElementById(`view-${viewName}`);
+        if (targetView) targetView.classList.remove('hidden');
+
+        // Update Nav visual indicators
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            const tabView = tab.getAttribute('data-view');
+            const icon = tab.querySelector('i');
+            const text = tab.querySelector('span');
+            
+            if (tabView === viewName) {
+                if (icon) icon.className = icon.className.replace('text-slate-400', 'text-brand-living font-bold');
+                if (text) text.className = "text-xs text-brand-living font-bold";
+            } else {
+                if (icon) icon.className = icon.className.replace('text-brand-living font-bold', 'text-slate-400');
+                if (text) text.className = "text-xs text-slate-400";
+            }
+        });
+
+        // Perform specific setup for newly opened view
+        if (viewName === 'home') {
+            renderHomeView();
+        } else if (viewName === 'records') {
+            renderRecordsView();
+        } else if (viewName === 'stats') {
+            renderStatsView();
+        } else if (viewName === 'categories') {
+            renderCategoriesView();
+        } else if (viewName === 'settings') {
+            renderSettingsView();
+        } else if (viewName === 'add') {
+            setupRecordForm();
+        } else if (viewName === 'ai-chat') {
+            renderAiChatHistory();
+        }
+
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    window.switchView = switchView;
+
+    async function compressImage(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = function (event) {
+                const img = new Image();
+                img.src = event.target.result;
+                img.onload = function () {
+                    const canvas = document.createElement('canvas');
+                    const max_width = 400; // Optimal thumbnail & invoice readability
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > max_width) {
+                        height = Math.round((height * max_width) / width);
+                        width = max_width;
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+                    resolve(dataUrl);
+                };
+                img.onerror = reject;
+            };
+            reader.onerror = reject;
+        });
+    }
+
+    function formatCurrency(amount) {
+        return new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', minimumFractionDigits: 0 }).format(amount);
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return '';
+        const d = new Date(dateStr);
+        return `${d.getMonth() + 1}月${d.getDate()}日`;
+    }
+
+    function getPayerBadgeClass(payer) {
+        if (payer === '共同分攤') return 'bg-purple-100 text-purple-700';
+        return payer === state.currentUser ? 'bg-blue-100 text-blue-700' : 'bg-pink-100 text-pink-700';
+    }
+
+    // Modal Notifications System
+    function showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `fixed top-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium transition-all duration-300 transform translate-y-2 opacity-0`;
+        
+        let icon = '<i class="fa-solid fa-circle-info text-blue-500"></i>';
+        if (type === 'success') {
+            toast.classList.add('bg-emerald-50', 'border-emerald-200', 'text-emerald-800');
+            icon = '<i class="fa-solid fa-circle-check text-emerald-500"></i>';
+        } else if (type === 'warning') {
+            toast.classList.add('bg-amber-50', 'border-amber-200', 'text-amber-800');
+            icon = '<i class="fa-solid fa-triangle-exclamation text-amber-500"></i>';
+        } else if (type === 'danger') {
+            toast.classList.add('bg-rose-50', 'border-rose-200', 'text-rose-800');
+            icon = '<i class="fa-solid fa-circle-xmark text-rose-500"></i>';
+        } else {
+            toast.classList.add('bg-blue-50', 'border-blue-200', 'text-blue-800');
+        }
+
+        toast.innerHTML = `${icon} <span>${message}</span>`;
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.classList.remove('translate-y-2', 'opacity-0');
+        }, 10);
+
+        setTimeout(() => {
+            toast.classList.add('translate-y-2', 'opacity-0');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
+    function showLoading(show) {
+        const loader = document.getElementById('global-loader');
+        if (loader) {
+            if (show) loader.classList.remove('hidden');
+            else loader.classList.add('hidden');
+        }
+    }
+
+    function renderHomeView() {
+        const currentMonthRecords = state.records.filter(r => r.date && r.date.startsWith(state.selectedMonth));
+        
+        let livingExpenseTotal = 0;
+        let rabbitExpenseTotal = 0;
+        let incomeTotal = 0;
+
+        currentMonthRecords.forEach(r => {
+            const val = parseFloat(r.amount) || 0;
+            if (r.type === 'income') {
+                incomeTotal += val;
+            } else {
+                if (r.account === 'living') {
+                    livingExpenseTotal += val;
+                } else if (r.account === 'rabbit') {
+                    rabbitExpenseTotal += val;
+                }
+            }
+        });
+
+        const totalExpense = livingExpenseTotal + rabbitExpenseTotal;
+        const netSaving = incomeTotal - totalExpense;
+
+        document.getElementById('overview-month-label').innerText = `${state.selectedMonth.split('-')[1]}月份 總覽`;
+        document.getElementById('home-living-exp').innerText = formatCurrency(livingExpenseTotal);
+        document.getElementById('home-rabbit-exp').innerText = formatCurrency(rabbitExpenseTotal);
+        document.getElementById('home-total-exp').innerText = formatCurrency(totalExpense);
+        document.getElementById('home-total-income').innerText = formatCurrency(incomeTotal);
+        
+        const netCard = document.getElementById('home-net-card');
+        const netVal = document.getElementById('home-net-saving');
+        netVal.innerText = formatCurrency(netSaving);
+        if (netSaving >= 0) {
+            netCard.className = "bg-white p-4 rounded-2xl shadow-sm border border-emerald-100 flex flex-col justify-between";
+            netVal.className = "text-2xl font-black text-emerald-600 mt-1";
+        } else {
+            netCard.className = "bg-white p-4 rounded-2xl shadow-sm border border-rose-100 flex flex-col justify-between";
+            netVal.className = "text-2xl font-black text-rose-500 mt-1";
+        }
+
+        renderMonthOverMonthAnalysis(totalExpense, livingExpenseTotal, rabbitExpenseTotal);
+        renderQuickTemplates();
+        renderRecentRecords(currentMonthRecords);
+    }
+
+    function renderMonthOverMonthAnalysis(currExp, currLiving, currRabbit) {
+        const parts = state.selectedMonth.split('-');
+        let year = parseInt(parts[0]);
+        let month = parseInt(parts[1]) - 1;
+        if (month === 0) {
+            month = 12;
+            year -= 1;
+        }
+        const prevMonthStr = `${year}-${String(month).padStart(2, '0')}`;
+        
+        const prevRecords = state.records.filter(r => r.date && r.date.startsWith(prevMonthStr));
+        let prevLiving = 0, prevRabbit = 0;
+        prevRecords.forEach(r => {
+            if (r.type === 'expense') {
+                if (r.account === 'living') prevLiving += parseFloat(r.amount) || 0;
+                else if (r.account === 'rabbit') prevRabbit += parseFloat(r.amount) || 0;
+            }
+        });
+
+        const prevTotal = prevLiving + prevRabbit;
+        const compareEl = document.getElementById('mom-comparison-text');
+        
+        if (prevTotal === 0) {
+            compareEl.innerHTML = `<span class="text-slate-500 text-sm">尚無上月份支出數據可比較</span>`;
+            return;
+        }
+
+        const pctDiff = Math.round(((currExp - prevTotal) / prevTotal) * 100);
+        let trendHtml = '';
+        if (pctDiff > 0) {
+            trendHtml = `<span class="text-rose-500 font-bold"><i class="fa-solid fa-arrow-trend-up"></i> 比上月增加 ${pctDiff}%</span>`;
+        } else if (pctDiff < 0) {
+            trendHtml = `<span class="text-emerald-600 font-bold"><i class="fa-solid fa-arrow-trend-down"></i> 比上月減少 ${Math.abs(pctDiff)}%</span>`;
+        } else {
+            trendHtml = `<span class="text-slate-500 font-bold">與上月支出持平</span>`;
+        }
+
+        compareEl.innerHTML = `
+            <div class="flex items-center justify-between text-sm w-full">
+                <span class="text-slate-500">上月總支出 ${formatCurrency(prevTotal)}</span>
+                ${trendHtml}
+            </div>
+        `;
+    }
+
+    function renderQuickTemplates() {
+        const container = document.getElementById('quick-templates-container');
+        if (!container) return;
+
+        if (state.templates.length === 0) {
+            container.innerHTML = `<p class="text-slate-400 text-sm py-4 text-center">無常用項目，可在設定中新增！</p>`;
+            return;
+        }
+
+        container.innerHTML = state.templates.map(t => {
+            const isRabbit = t.account === 'rabbit';
+            const colorClass = isRabbit ? 'bg-orange-50 hover:bg-orange-100 text-orange-700 border-orange-100' : 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-100';
+            const icon = isRabbit ? '<i class="fa-solid fa-paw mr-1"></i>' : '<i class="fa-solid fa-house mr-1"></i>';
+            return `
+                <button onclick="applyTemplate('${t.id}')" class="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 border rounded-xl text-xs font-semibold cursor-pointer transition-colors ${colorClass}">
+                    ${icon}
+                    <span>${t.title} (${t.amount})</span>
+                </button>
+            `;
+        }).join('');
+    }
+
+    window.applyTemplate = function(id) {
+        const t = state.templates.find(item => item.id === id);
+        if (!t) return;
+
+        state.editId = null;
+        state.copyId = null;
+        switchView('add');
+
+        setTimeout(() => {
+            document.getElementById('form-title').innerText = "快速帶入常用：新增紀錄";
+            document.getElementById('rec-title').value = t.title;
+            document.getElementById('rec-amount').value = t.amount;
+            document.getElementById('rec-account').value = t.account;
+            document.getElementById('rec-type').value = t.type;
+            
+            onAccountChange();
+            document.getElementById('rec-category').value = t.category;
+            document.getElementById('rec-payer').value = t.payer;
+            document.getElementById('rec-pay-method').value = t.payMethod;
+            showToast(`已帶入常用項目：「${t.title}」`, 'success');
+        }, 100);
+    };
+
+    function renderRecentRecords(records) {
+        const container = document.getElementById('recent-records-container');
+        if (!container) return;
+
+        const recent = [...records].sort((a, b) => {
+            const dateCompare = new Date(b.date) - new Date(a.date);
+            if (dateCompare !== 0) return dateCompare;
+            return (b.createdAt || 0) - (a.createdAt || 0);
+        }).slice(0, 5);
+
+        if (recent.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8 bg-white rounded-2xl border border-slate-100">
+                    <img src="https://placehold.co/100x100/f8fafc/94a3b8?text=🐾" class="mx-auto rounded-full mb-3 opacity-60" alt="No records">
+                    <p class="text-slate-400 text-sm">本月尚無任何收支紀錄</p>
+                    <button onclick="switchView('add')" class="mt-3 text-xs bg-brand-living text-white px-4 py-2 rounded-lg font-bold">手刀新增第一筆</button>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = recent.map(r => renderRecordRowHtml(r)).join('');
+    }
+
+    function renderRecordRowHtml(r) {
+        const isRabbit = r.account === 'rabbit';
+        const isIncome = r.type === 'income';
+        const accountBadge = isRabbit 
+            ? '<span class="px-2 py-0.5 text-[10px] font-bold bg-amber-500 text-white rounded-full">起粑</span>' 
+            : '<span class="px-2 py-0.5 text-[10px] font-bold bg-sky-500 text-white rounded-full">生活</span>';
+        
+        const sign = isIncome ? '+' : '-';
+        const amtColor = isIncome ? 'text-emerald-600' : (isRabbit ? 'text-orange-600' : 'text-slate-800');
+        
+        const cat = state.categories.find(c => c.name === r.category);
+        const iconClass = cat ? cat.icon : 'fa-tag';
+        const colorClass = cat ? cat.color : '#64748b';
+
+        const hasAttachment = r.images && r.images.length > 0;
+        const clipIcon = hasAttachment ? `<i class="fa-solid fa-paperclip text-slate-400 text-xs ml-1 hover:text-brand-living" onclick="viewAttachments('${r.id}', event)"></i>` : '';
+
+        return `
+            <div class="flex items-center justify-between p-3.5 bg-white rounded-xl border border-slate-100 hover:border-slate-200 hover:shadow-sm transition-all cursor-pointer" onclick="openRecordActionMenu('${r.id}')">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-full flex items-center justify-center text-white" style="background-color: ${colorClass}">
+                        <i class="fa-solid ${iconClass}"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                            <span class="font-bold text-sm text-slate-800">${r.title || r.category}</span>
+                            ${clipIcon}
+                        </div>
+                        <div class="flex items-center gap-2 mt-0.5 text-xs text-slate-400">
+                            <span>${formatDate(r.date)}</span>
+                            <span>•</span>
+                            <span>${accountBadge}</span>
+                            <span>•</span>
+                            <span class="px-1.5 py-0.2 rounded-md font-medium text-[10px] ${getPayerBadgeClass(r.payer)}">${r.payer}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <div class="text-base font-black ${amtColor}">${sign}${r.amount.toLocaleString()}</div>
+                    <div class="text-[10px] text-slate-400 mt-0.5">${r.payMethod || '其他'} • 由${r.updatedBy || r.createdBy || '共同'}錄</div>
+                </div>
+            </div>
+        `;
+    }
+
+    window.viewAttachments = function(id, event) {
+        if (event) event.stopPropagation();
+        const r = state.records.find(item => item.id === id);
+        if (!r || !r.images || r.images.length === 0) return;
+
+        openLightbox(r.images);
+    };
+
+    function openLightbox(images) {
+        const modal = document.getElementById('lightbox-modal');
+        const container = document.getElementById('lightbox-images-container');
+        if (!modal || !container) return;
+
+        container.innerHTML = images.map(img => `
+            <div class="flex flex-col items-center">
+                <img src="${img}" class="max-w-full max-h-[70vh] rounded-xl object-contain shadow-md" alt="收據憑證">
+            </div>
+        `).join('');
+
+        modal.classList.remove('hidden');
+    }
+
+    window.closeLightbox = function() {
+        const modal = document.getElementById('lightbox-modal');
+        if (modal) modal.classList.add('hidden');
+    };
+
+    let targetRecordIdForActions = null;
+
+    window.openRecordActionMenu = function(id) {
+        targetRecordIdForActions = id;
+        const r = state.records.find(item => item.id === id);
+        if (!r) return;
+
+        const modal = document.getElementById('action-menu-modal');
+        document.getElementById('action-menu-title').innerText = `管理：${r.title || r.category}`;
+        modal.classList.remove('hidden');
+    };
+
+    window.closeRecordActionMenu = function() {
+        const modal = document.getElementById('action-menu-modal');
+        if (modal) modal.classList.add('hidden');
+    };
+
+    window.handleEditAction = function() {
+        const id = targetRecordIdForActions;
+        closeRecordActionMenu();
+        const r = state.records.find(item => item.id === id);
+        if (!r) return;
+
+        state.editId = id;
+        state.copyId = null;
+        switchView('add');
+
+        setTimeout(() => {
+            document.getElementById('form-title').innerText = "編輯收支明細";
+            document.getElementById('rec-date').value = r.date || new Date().toISOString().substring(0, 10);
+            document.getElementById('rec-account').value = r.account;
+            document.getElementById('rec-type').value = r.type;
+            
+            onAccountChange();
+            document.getElementById('rec-category').value = r.category;
+            document.getElementById('rec-amount').value = r.amount;
+            document.getElementById('rec-title').value = r.title || '';
+            document.getElementById('rec-payer').value = r.payer || '';
+            document.getElementById('rec-pay-method').value = r.payMethod || '現金';
+            document.getElementById('rec-notes').value = r.note || '';
+
+            renderFormImagePreviews(r.images || []);
+        }, 100);
+    };
+
+    window.handleCopyAction = function() {
+        const id = targetRecordIdForActions;
+        closeRecordActionMenu();
+        const r = state.records.find(item => item.id === id);
+        if (!r) return;
+
+        state.editId = null;
+        state.copyId = id;
+        switchView('add');
+
+        setTimeout(() => {
+            document.getElementById('form-title').innerText = "複製新增收支 (日期為今日)";
+            document.getElementById('rec-date').value = new Date().toISOString().substring(0, 10);
+            document.getElementById('rec-account').value = r.account;
+            document.getElementById('rec-type').value = r.type;
+            
+            onAccountChange();
+            document.getElementById('rec-category').value = r.category;
+            document.getElementById('rec-amount').value = r.amount;
+            document.getElementById('rec-title').value = `${r.title || ''}`;
+            document.getElementById('rec-payer').value = r.payer || '';
+            document.getElementById('rec-pay-method').value = r.payMethod || '現金';
+            document.getElementById('rec-notes').value = r.note || '';
+
+            renderFormImagePreviews(r.images || []);
+        }, 100);
+    };
+
+    window.handleDeleteAction = function() {
+        const id = targetRecordIdForActions;
+        closeRecordActionMenu();
+        const r = state.records.find(item => item.id === id);
+        if (!r) return;
+
+        openConfirmModal(
+            `確定刪除紀錄嗎？`,
+            `您即將刪除「${r.title || r.category}」金額 ${formatCurrency(r.amount)} 的紀錄，此動作無法復原。`,
+            async () => {
+                showLoading(true);
+                try {
+                    if (isFirebaseReady) {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', id);
+                        await deleteDoc(docRef);
+                    } else {
+                        state.records = state.records.filter(item => item.id !== id);
+                        saveLocalData();
+                        renderApp();
+                    }
+                    showToast('紀錄已成功刪除', 'success');
+                } catch (e) {
+                    console.error(e);
+                    showToast('刪除失敗，請重新嘗試', 'danger');
+                } finally {
+                    showLoading(false);
+                }
+            }
+        );
+    };
+
+    let confirmActionCallback = null;
+    function openConfirmModal(title, body, onConfirm) {
+        const modal = document.getElementById('confirm-dialog-modal');
+        if (!modal) return;
+        document.getElementById('confirm-title').innerText = title;
+        document.getElementById('confirm-body').innerText = body;
+        confirmActionCallback = onConfirm;
+        modal.classList.remove('hidden');
+    }
+
+    window.closeConfirmModal = function() {
+        const modal = document.getElementById('confirm-dialog-modal');
+        if (modal) modal.classList.add('hidden');
+        confirmActionCallback = null;
+    };
+
+    window.triggerConfirmAction = function() {
+        if (confirmActionCallback) {
+            confirmActionCallback();
+        }
+        closeConfirmModal();
+    };
+
+    let formImages = [];
+
+    function setupRecordForm() {
+        const today = new Date().toISOString().substring(0, 10);
+        document.getElementById('rec-date').value = today;
+
+        onAccountChange();
+        
+        formImages = [];
+        renderFormImagePreviews([]);
+        
+        const payerSelect = document.getElementById('rec-payer');
+        payerSelect.innerHTML = `
+            <option value="共同分攤">👫 共同分攤</option>
+            <option value="${state.currentUser}">🙋 ${state.currentUser}</option>
+            <option value="${state.partnerUser}">🙋 ${state.partnerUser}</option>
+        `;
+    }
+
+    function resetRecordForm() {
+        state.editId = null;
+        state.copyId = null;
+        document.getElementById('form-title').innerText = "新增收支明細";
+        document.getElementById('rec-title').value = '';
+        document.getElementById('rec-amount').value = '';
+        document.getElementById('rec-notes').value = '';
+        formImages = [];
+        renderFormImagePreviews([]);
+    }
+    window.resetRecordForm = resetRecordForm;
+
+    window.onAccountChange = function() {
+        const account = document.getElementById('rec-account').value;
+        const type = document.getElementById('rec-type').value;
+        const catSelect = document.getElementById('rec-category');
+
+        const filteredCats = state.categories.filter(c => c.account === account && c.type === type);
+        catSelect.innerHTML = filteredCats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+    };
+
+    window.handleImageSelect = async function(event) {
+        const files = event.target.files;
+        if (!files || files.length === 0) return;
+
+        state.isUploading = true;
+        document.getElementById('upload-status-indicator').innerText = "📷 處理壓縮圖片中...";
+
+        for (let file of files) {
+            try {
+                const base64Img = await compressImage(file);
+                formImages.push(base64Img);
+            } catch (err) {
+                console.error("Image process fail:", err);
+                showToast("部分圖片載入失敗", "warning");
+            }
+        }
+
+        renderFormImagePreviews(formImages);
+        state.isUploading = false;
+        document.getElementById('upload-status-indicator').innerText = "";
+        event.target.value = '';
+    };
+
+    function renderFormImagePreviews(images) {
+        formImages = [...images];
+        const container = document.getElementById('form-image-previews');
+        if (!container) return;
+
+        if (formImages.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+
+        container.innerHTML = formImages.map((img, idx) => `
+            <div class="relative w-20 h-20 rounded-xl overflow-hidden shadow-inner border border-slate-100 flex-shrink-0 group">
+                <img src="${img}" class="w-full h-full object-cover">
+                <button type="button" onclick="removeFormImage(${idx})" class="absolute top-1 right-1 w-5 h-5 bg-black/60 rounded-full text-white text-[10px] flex items-center justify-center cursor-pointer hover:bg-rose-600 transition-colors">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        `).join('');
+    }
+
+    window.removeFormImage = function(idx) {
+        formImages.splice(idx, 1);
+        renderFormImagePreviews(formImages);
+    };
+
+    window.triggerAiReceiptParsing = async function() {
+        if (formImages.length === 0) {
+            showToast("請先利用下方按鈕上傳收據或發票照片喔！🐾", "warning");
+            return;
+        }
+
+        const loader = document.getElementById('global-loader');
+        const loaderText = loader.querySelector('span');
+        
+        loaderText.innerText = "✨ 兔兔 AI 正在辨識發票與整理項目中...";
+        loader.classList.remove('hidden');
+
+        try {
+            // Get base64 representation
+            const fullBase64 = formImages[0];
+            const base64Parts = fullBase64.split(',');
+            const mimeType = base64Parts[0].split(';')[0].split(':')[1];
+            const base64Data = base64Parts[1];
+
+            const categoryList = state.categories.map(c => c.name).join(', ');
+            const systemPrompt = `你是一個專業的繁體中文記帳助理。請分析這張發票或收據圖片，提取內容以符合我們的記帳欄位格式。
+            以下是我們的記帳分類列表：[${categoryList}]
+            請務必遵守以下規範：
+            1. 項目名稱(title)：自動幫忙取一個簡潔懂的名字（例如：全聯鮮乳、7-11晚餐、起粑牧草）。
+            2. 金額(amount)：精準的總金額數（數字，不包含任何逗號）。
+            3. 消費分類(category)：必須完全符合我提供給你的記帳分類列表，如果無法決定，請分配最合理的分類。
+            4. 交易類型(type)：若是開銷支出，回傳 "expense"；若是收入，回傳 "income"。
+            5. 帳本帳戶(account)：若是生活相關開銷，回傳 "living"；若是與愛兔「起粑🐰」、草料、起粑醫療、寵物美容相關，回傳 "rabbit"。
+            6. 付款方式(payMethod)：根據發票上寫的付款方式，選擇最接近的選項：「現金」、「信用卡」、「轉帳」、「電子支付」或「其他」。
+            7. 備註(notes)：幫忙寫下提取到的商品明細、備註，或發票號碼等，無特別內容可保持空字串。
+            
+            你必須且只能回傳一個有效的 JSON 物件，不可以加上 Markdown \`\`\`json 的格式標記。`;
+
+            const apiKey = ""; // Canvas Injector handles API keys at runtime
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+            const payload = {
+                contents: [{
+                    role: "user",
+                    parts: [
+                        { text: "請辨識此張收據/發票的記帳資訊：" },
+                        { inlineData: { mimeType: mimeType, data: base64Data } }
+                    ]
+                }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            title: { type: "STRING" },
+                            amount: { type: "NUMBER" },
+                            category: { type: "STRING" },
+                            type: { type: "STRING", enum: ["expense", "income"] },
+                            account: { type: "STRING", enum: ["living", "rabbit"] },
+                            payMethod: { type: "STRING", enum: ["現金", "信用卡", "轉帳", "電子支付", "其他"] },
+                            notes: { type: "STRING" }
+                        },
+                        required: ["title", "amount", "category", "type", "account", "payMethod"]
+                    }
+                }
+            };
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error("API call failed");
+            }
+
+            const result = await response.json();
+            const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            
+            if (textResponse) {
+                const parsed = JSON.parse(textResponse);
+                
+                // Prefill form
+                document.getElementById('rec-title').value = parsed.title || '';
+                document.getElementById('rec-amount').value = parsed.amount || '';
+                document.getElementById('rec-account').value = parsed.account || 'living';
+                document.getElementById('rec-type').value = parsed.type || 'expense';
+                
+                // Remap categories
+                onAccountChange();
+                document.getElementById('rec-category').value = parsed.category || '';
+                document.getElementById('rec-pay-method').value = parsed.payMethod || '現金';
+                document.getElementById('rec-notes').value = parsed.notes || '';
+                
+                showToast("🎉 AI 智慧辨識成功！表單欄位已自動填寫。", "success");
+            } else {
+                throw new Error("Empty AI response");
+            }
+
+        } catch (err) {
+            console.error("AI receipt error:", err);
+            showToast("AI 辨識失敗，這可能是因為圖片不夠清晰或連線不穩。請手動輸入資料或再試一次。", "danger");
+        } finally {
+            loader.classList.add('hidden');
+            loaderText.innerText = "正在處理雲端同步中...";
+        }
+    };
+
+    window.saveRecordSubmit = async function(event) {
+        if (event) event.preventDefault();
+
+        if (state.isUploading) {
+            showToast('圖片仍在壓縮中，請稍候。', 'warning');
+            return;
+        }
+
+        const date = document.getElementById('rec-date').value;
+        const account = document.getElementById('rec-account').value;
+        const type = document.getElementById('rec-type').value;
+        const category = document.getElementById('rec-category').value;
+        const amountRaw = document.getElementById('rec-amount').value;
+        const title = document.getElementById('rec-title').value.trim();
+        const payer = document.getElementById('rec-payer').value;
+        const payMethod = document.getElementById('rec-pay-method').value;
+        const note = document.getElementById('rec-notes').value.trim();
+
+        const amount = parseFloat(amountRaw);
+        if (isNaN(amount) || amount <= 0) {
+            showToast('請輸入正確且大於 0 的金額！', 'danger');
+            document.getElementById('rec-amount').focus();
+            return;
+        }
+
+        if (!category) {
+            showToast('請選擇消費分類，如無分類請先在設定或分類管理中新增', 'danger');
+            return;
+        }
+
+        showLoading(true);
+
+        const recordPayload = {
+            bookId: state.syncCode,
+            date,
+            account,
+            type,
+            category,
+            amount,
+            title: title || category,
+            payer,
+            payMethod,
+            note,
+            images: formImages,
+            updatedBy: state.currentUser,
+            updatedAt: Date.now()
+        };
+
+        try {
+            if (state.editId) {
+                if (isFirebaseReady) {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', state.editId);
+                    await updateDoc(docRef, recordPayload);
+                } else {
+                    const idx = state.records.findIndex(r => r.id === state.editId);
+                    if (idx > -1) {
+                        state.records[idx] = { ...state.records[idx], ...recordPayload };
+                    }
+                }
+                showToast('紀錄修改成功！', 'success');
+            } else {
+                recordPayload.createdBy = state.currentUser;
+                recordPayload.createdAt = Date.now();
+
+                if (isFirebaseReady) {
+                    const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'records');
+                    await addDoc(recordsCol, recordPayload);
+                } else {
+                    recordPayload.id = 'r_' + Date.now();
+                    state.records.push(recordPayload);
+                }
+                showToast('記帳成功！', 'success');
+            }
+
+            if (!isFirebaseReady) {
+                saveLocalData();
+                renderApp();
+            }
+
+            resetRecordForm();
+            switchView('home');
+        } catch (e) {
+            console.error("Save failed:", e);
+            showToast('儲存失敗，請檢查網路連線', 'danger');
+        } finally {
+            showLoading(false);
+        }
+    };
+
+    function renderRecordsView() {
+        const filterAccount = document.getElementById('filter-account').value;
+        const filterType = document.getElementById('filter-type').value;
+        const filterCategory = document.getElementById('filter-category').value;
+        const filterPayer = document.getElementById('filter-payer').value;
+        const searchKeyword = document.getElementById('filter-keyword').value.trim().toLowerCase();
+        const minAmt = parseFloat(document.getElementById('filter-min-amount').value);
+        const maxAmt = parseFloat(document.getElementById('filter-max-amount').value);
+        const dateFrom = document.getElementById('filter-date-from').value;
+        const dateTo = document.getElementById('filter-date-to').value;
+
+        bindCategoryFilters();
+
+        let filtered = state.records;
+
+        if (filterAccount !== 'all') {
+            filtered = filtered.filter(r => r.account === filterAccount);
+        }
+        if (filterType !== 'all') {
+            filtered = filtered.filter(r => r.type === filterType);
+        }
+        if (filterCategory !== 'all') {
+            filtered = filtered.filter(r => r.category === filterCategory);
+        }
+        if (filterPayer !== 'all') {
+            filtered = filtered.filter(r => r.payer === filterPayer);
+        }
+        if (searchKeyword) {
+            filtered = filtered.filter(r => 
+                (r.title && r.title.toLowerCase().includes(searchKeyword)) ||
+                (r.note && r.note.toLowerCase().includes(searchKeyword)) ||
+                (r.category && r.category.toLowerCase().includes(searchKeyword))
+            );
+        }
+        if (!isNaN(minAmt)) {
+            filtered = filtered.filter(r => r.amount >= minAmt);
+        }
+        if (!isNaN(maxAmt)) {
+            filtered = filtered.filter(r => r.amount <= maxAmt);
+        }
+        if (dateFrom) {
+            filtered = filtered.filter(r => r.date >= dateFrom);
+        }
+        if (dateTo) {
+            filtered = filtered.filter(r => r.date <= dateTo);
+        }
+
+        filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        const listContainer = document.getElementById('records-list-container');
+        if (!listContainer) return;
+
+        if (filtered.length === 0) {
+            listContainer.innerHTML = `
+                <div class="text-center py-12 bg-white rounded-2xl border border-slate-100">
+                    <p class="text-slate-400">找不到符合搜尋條件的明細</p>
+                </div>
+            `;
+            return;
+        }
+
+        const groups = {};
+        filtered.forEach(r => {
+            if (!groups[r.date]) {
+                groups[r.date] = [];
+            }
+            groups[r.date].push(r);
+        });
+
+        const sortedDates = Object.keys(groups).sort((a, b) => new Date(b) - new Date(a));
+
+        listContainer.innerHTML = sortedDates.map(date => {
+            const dateObj = new Date(date);
+            const weekday = ['日', '一', '二', '三', '四', '五', '六'][dateObj.getDay()];
+            const groupSum = groups[date].reduce((acc, curr) => {
+                if (curr.type === 'income') return acc + curr.amount;
+                return acc - curr.amount;
+            }, 0);
+
+            const balanceSign = groupSum >= 0 ? '+' : '';
+            const balanceColor = groupSum >= 0 ? 'text-emerald-600' : 'text-rose-500';
+
+            return `
+                <div class="mb-5">
+                    <div class="flex items-center justify-between px-2 mb-2">
+                        <span class="text-xs font-bold text-slate-500">${date.replace('-', '年').replace('-', '月') + '日'} (星期${weekday})</span>
+                        <span class="text-[11px] font-bold ${balanceColor}">日小計 ${balanceSign}${formatCurrency(groupSum)}</span>
+                    </div>
+                    <div class="space-y-2">
+                        ${groups[date].map(r => renderRecordRowHtml(r)).join('')}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function bindCategoryFilters() {
+        const catSelect = document.getElementById('filter-category');
+        const prevVal = catSelect.value;
+        const currentCategoryNames = [...new Set(state.categories.map(c => c.name))];
+        
+        catSelect.innerHTML = '<option value="all">所有消費分類</option>' + 
+            currentCategoryNames.map(name => `<option value="${name}">${name}</option>`).join('');
+        catSelect.value = prevVal;
+    }
+
+    window.triggerSearchFilter = function() {
+        renderRecordsView();
+    };
+
+    window.resetSearchFilters = function() {
+        document.getElementById('filter-account').value = 'all';
+        document.getElementById('filter-type').value = 'all';
+        document.getElementById('filter-category').value = 'all';
+        document.getElementById('filter-payer').value = 'all';
+        document.getElementById('filter-keyword').value = '';
+        document.getElementById('filter-min-amount').value = '';
+        document.getElementById('filter-max-amount').value = '';
+        document.getElementById('filter-date-from').value = '';
+        document.getElementById('filter-date-to').value = '';
+        renderRecordsView();
+        showToast('已重設所有篩選器', 'info');
+    };
+
+    window.toggleFilterPanel = function() {
+        const panel = document.getElementById('advanced-filter-panel');
+        if (panel.classList.contains('hidden')) {
+            panel.classList.remove('hidden');
+        } else {
+            panel.classList.add('hidden');
+        }
+    };
+
+    window.exportToCSV = function() {
+        if (state.records.length === 0) {
+            showToast('尚無任何紀錄可供匯出。', 'warning');
+            return;
+        }
+
+        const headers = ['日期', '帳本帳戶', '收支類型', '金額', '消費分類', '項目名稱', '付款人', '付款方式', '備註', '新增者'];
+        const csvRows = [];
+        csvRows.push('\uFEFF' + headers.join(',')); // UTF-8 BOM
+
+        state.records.forEach(r => {
+            const row = [
+                r.date,
+                r.account === 'living' ? '生活開銷' : '起粑開銷',
+                r.type === 'income' ? '收入' : '支出',
+                r.amount,
+                r.category,
+                `"${(r.title || '').replace(/"/g, '""')}"`,
+                r.payer,
+                r.payMethod,
+                `"${(r.note || '').replace(/"/g, '""')}"`,
+                r.createdBy || ''
+            ];
+            csvRows.push(row.join(','));
+        });
+
+        const csvContent = csvRows.join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `雙人生活記帳_${state.syncCode}_${state.selectedMonth}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast('記帳資料 CSV 已成功匯出！', 'success');
+    };
+
+    let livingChartInstance = null;
+    let rabbitChartInstance = null;
+    let trendChartInstance = null;
+
+    function renderStatsView() {
+        const statsMonth = document.getElementById('stats-month-selector').value;
+        const currentMonthRecords = state.records.filter(r => r.date && r.date.startsWith(statsMonth));
+
+        let livingExpTotal = 0;
+        let rabbitExpTotal = 0;
+        let incomeTotal = 0;
+
+        const livingCatSums = {};
+        const rabbitCatSums = {};
+        const dailyTrends = {};
+
+        currentMonthRecords.forEach(r => {
+            const amount = parseFloat(r.amount) || 0;
+            if (r.type === 'income') {
+                incomeTotal += amount;
+            } else {
+                if (r.account === 'living') {
+                    livingExpTotal += amount;
+                    livingCatSums[r.category] = (livingCatSums[r.category] || 0) + amount;
+                } else if (r.account === 'rabbit') {
+                    rabbitExpTotal += amount;
+                    rabbitCatSums[r.category] = (rabbitCatSums[r.category] || 0) + amount;
+                }
+
+                const day = r.date.split('-')[2];
+                dailyTrends[day] = (dailyTrends[day] || 0) + amount;
+            }
+        });
+
+        const totalExpense = livingExpTotal + rabbitExpTotal;
+        const netSave = incomeTotal - totalExpense;
+
+        document.getElementById('stat-total-income').innerText = formatCurrency(incomeTotal);
+        document.getElementById('stat-total-expense').innerText = formatCurrency(totalExpense);
+        document.getElementById('stat-living-exp').innerText = formatCurrency(livingExpTotal);
+        document.getElementById('stat-rabbit-exp').innerText = formatCurrency(rabbitExpTotal);
+        
+        const netCard = document.getElementById('stat-net-card');
+        const netVal = document.getElementById('stat-net-saving');
+        netVal.innerText = formatCurrency(netSave);
+        if (netSave >= 0) {
+            netVal.className = "text-xl font-bold text-emerald-600";
+        } else {
+            netVal.className = "text-xl font-bold text-rose-500";
+        }
+
+        const combinedExpenseCats = { ...livingCatSums, ...rabbitCatSums };
+        let highestCatName = '無';
+        let highestCatVal = 0;
+        Object.entries(combinedExpenseCats).forEach(([cat, sum]) => {
+            if (sum > highestCatVal) {
+                highestCatVal = sum;
+                highestCatName = cat;
+            }
+        });
+
+        document.getElementById('stat-highest-category').innerHTML = highestCatVal > 0 
+            ? `<span class="bg-rose-50 text-rose-600 px-3 py-1 rounded-full font-bold text-sm border border-rose-100">${highestCatName} (${formatCurrency(highestCatVal)})</span>`
+            : `<span class="text-slate-400 text-sm">本月無支出</span>`;
+
+        if (livingChartInstance) livingChartInstance.destroy();
+        if (rabbitChartInstance) rabbitChartInstance.destroy();
+        if (trendChartInstance) trendChartInstance.destroy();
+
+        const ctxLiving = document.getElementById('chart-living-cats').getContext('2d');
+        const ctxRabbit = document.getElementById('chart-rabbit-cats').getContext('2d');
+        const ctxTrend = document.getElementById('chart-daily-trend').getContext('2d');
+
+        if (Object.keys(livingCatSums).length > 0) {
+            document.getElementById('living-chart-fallback').classList.add('hidden');
+            document.getElementById('chart-living-cats').classList.remove('hidden');
+
+            const labels = Object.keys(livingCatSums);
+            const data = Object.values(livingCatSums);
+            
+            const colors = labels.map(label => {
+                const c = state.categories.find(item => item.name === label);
+                return c ? c.color : '#cbd5e1';
+            });
+
+            livingChartInstance = new Chart(ctxLiving, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: colors,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }
+                    }
+                }
+            });
+        } else {
+            document.getElementById('living-chart-fallback').classList.remove('hidden');
+            document.getElementById('chart-living-cats').classList.add('hidden');
+        }
+
+        if (Object.keys(rabbitCatSums).length > 0) {
+            document.getElementById('rabbit-chart-fallback').classList.add('hidden');
+            document.getElementById('chart-rabbit-cats').classList.remove('hidden');
+
+            const labels = Object.keys(rabbitCatSums);
+            const data = Object.values(rabbitCatSums);
+            const colors = labels.map(label => {
+                const c = state.categories.find(item => item.name === label);
+                return c ? c.color : '#cbd5e1';
+            });
+
+            rabbitChartInstance = new Chart(ctxRabbit, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: colors,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }
+                    }
+                }
+            });
+        } else {
+            document.getElementById('rabbit-chart-fallback').classList.remove('hidden');
+            document.getElementById('chart-rabbit-cats').classList.add('hidden');
+        }
+
+        const daysInMonth = new Date(statsMonth.split('-')[0], statsMonth.split('-')[1], 0).getDate();
+        const trendLabels = Array.from({ length: daysInMonth }, (_, i) => String(i + 1).padStart(2, '0'));
+        const trendData = trendLabels.map(day => dailyTrends[day] || 0);
+
+        trendChartInstance = new Chart(ctxTrend, {
+            type: 'bar',
+            data: {
+                labels: trendLabels.map(d => `${parseInt(d)}日`),
+                datasets: [{
+                    label: '每日總支出額',
+                    data: trendData,
+                    backgroundColor: '#0ea5e9',
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { size: 10 } } },
+                    x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 0 } }
+                },
+                plugins: {
+                    legend: { display: false }
+                }
+            }
+        });
+    }
+
+    window.onStatsMonthChange = function() {
+        renderStatsView();
+    };
+
+    function renderCategoriesView() {
+        const livingContainer = document.getElementById('cat-list-living');
+        const rabbitContainer = document.getElementById('cat-list-rabbit');
+        if (!livingContainer || !rabbitContainer) return;
+
+        const livingCats = state.categories.filter(c => c.account === 'living');
+        const rabbitCats = state.categories.filter(c => c.account === 'rabbit');
+
+        const mapper = (cat) => `
+            <div class="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-100 shadow-sm">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-full flex items-center justify-center text-white" style="background-color: ${cat.color}">
+                        <i class="fa-solid ${cat.icon}"></i>
+                    </div>
+                    <span class="font-bold text-sm text-slate-800">${cat.name}</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="text-xs text-slate-400 mr-2">${cat.type === 'expense' ? '支出' : '收入'}</span>
+                    <button onclick="deleteCustomCategory('${cat.id}')" class="w-8 h-8 rounded-full hover:bg-rose-50 text-slate-400 hover:text-rose-600 flex items-center justify-center cursor-pointer transition-colors">
+                        <i class="fa-solid fa-trash-can text-xs"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+
+        livingContainer.innerHTML = livingCats.map(mapper).join('');
+        rabbitContainer.innerHTML = rabbitCats.map(mapper).join('');
+    }
+
+    window.openAddCategoryModal = function() {
+        document.getElementById('cat-modal-name').value = '';
+        document.getElementById('add-category-modal').classList.remove('hidden');
+    };
+
+    window.closeAddCategoryModal = function() {
+        document.getElementById('add-category-modal').classList.add('hidden');
+    };
+
+    window.saveCustomCategory = async function() {
+        const name = document.getElementById('cat-modal-name').value.trim();
+        const account = document.getElementById('cat-modal-account').value;
+        const type = document.getElementById('cat-modal-type').value;
+        const color = document.getElementById('cat-modal-color').value;
+        const icon = document.getElementById('cat-modal-icon').value;
+
+        if (!name) {
+            showToast('請輸入分類名稱！', 'danger');
+            return;
+        }
+
+        const exists = state.categories.some(c => c.account === account && c.type === type && c.name.toLowerCase() === name.toLowerCase());
+        if (exists) {
+            showToast('該帳戶已存在相同名稱的分類', 'warning');
+            return;
+        }
+
+        showLoading(true);
+        const payload = {
+            bookId: state.syncCode,
+            account,
+            type,
+            name,
+            color,
+            icon
+        };
+
+        try {
+            if (isFirebaseReady) {
+                const categoriesCol = collection(db, 'artifacts', appId, 'public', 'data', 'categories');
+                await addDoc(categoriesCol, payload);
+            } else {
+                payload.id = 'c_' + Date.now();
+                state.categories.push(payload);
+                saveLocalData();
+                renderCategoriesView();
+            }
+            showToast(`成功新增分類：「${name}」`, 'success');
+            closeAddCategoryModal();
+            renderApp();
+        } catch (e) {
+            console.error(e);
+            showToast('新增分類失敗，請確認連線。', 'danger');
+        } finally {
+            showLoading(false);
+        }
+    };
+
+    window.deleteCustomCategory = async function(id) {
+        const cat = state.categories.find(c => c.id === id);
+        if (!cat) return;
+
+        openConfirmModal(
+            `確定刪除分類「${cat.name}」嗎？`,
+            `刪除此分類不會刪除現有的記帳紀錄，但未來該分類將無法再被選取。`,
+            async () => {
+                showLoading(true);
+                try {
+                    if (isFirebaseReady) {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'categories', id);
+                        await deleteDoc(docRef);
+                    } else {
+                        state.categories = state.categories.filter(c => c.id !== id);
+                        saveLocalData();
+                        renderCategoriesView();
+                    }
+                    showToast('分類已成功刪除', 'success');
+                } catch (e) {
+                    console.error(e);
+                    showToast('刪除分類失敗', 'danger');
+                } finally {
+                    showLoading(false);
+                }
+            }
+        );
+    };
+
+    function renderSettingsView() {
+        document.getElementById('sync-code-input').value = state.syncCode;
+        document.getElementById('user-name-input').value = state.currentUser;
+        document.getElementById('partner-name-input').value = state.partnerUser;
+        
+        const templateContainer = document.getElementById('settings-templates-list');
+        if (templateContainer) {
+            if (state.templates.length === 0) {
+                templateContainer.innerHTML = `<p class="text-slate-400 text-xs py-2">目前沒有常用快捷鍵，請點按下方新增。</p>`;
+                return;
+            }
+            templateContainer.innerHTML = state.templates.map(t => {
+                const isRabbit = t.account === 'rabbit';
+                const badge = isRabbit ? 'bg-orange-100 text-orange-700' : 'bg-sky-100 text-sky-700';
+                return `
+                    <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-sm">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs px-2 py-0.5 rounded-full font-bold ${badge}">${isRabbit ? '起粑' : '生活'}</span>
+                            <span class="font-bold text-slate-700">${t.title}</span>
+                            <span class="text-slate-400">(${formatCurrency(t.amount)})</span>
+                        </div>
+                        <button onclick="deleteTemplate('${t.id}')" class="w-7 h-7 text-slate-400 hover:text-rose-600 flex items-center justify-center cursor-pointer">
+                            <i class="fa-solid fa-trash-can text-xs"></i>
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+    }
+
+    window.saveGeneralSettings = function() {
+        const syncInput = document.getElementById('sync-code-input').value.trim().toUpperCase();
+        const userInput = document.getElementById('user-name-input').value.trim();
+        const partnerInput = document.getElementById('partner-name-input').value.trim();
+
+        if (!syncInput) {
+            showToast('同步碼/共享代碼不能留空！', 'danger');
+            return;
+        }
+
+        if (!userInput) {
+            showToast('主記帳人姓名不能留空！', 'danger');
+            return;
+        }
+
+        const syncChanged = state.syncCode !== syncInput;
+
+        state.syncCode = syncInput;
+        state.currentUser = userInput;
+        state.partnerUser = partnerInput || '伴侶';
+
+        localStorage.setItem('ledger_sync_code', state.syncCode);
+        localStorage.setItem('ledger_user_name', state.currentUser);
+        localStorage.setItem('ledger_partner_name', state.partnerUser);
+
+        showToast('設定已儲存！', 'success');
+
+        if (syncChanged) {
+            showToast(`同步碼已更改為 ${state.syncCode}，重新載入雲端中...`, 'info');
+            setupFirestoreListeners();
+        } else {
+            renderApp();
+        }
+    };
+
+    window.openAddTemplateModal = function() {
+        document.getElementById('temp-modal-title').value = '';
+        document.getElementById('temp-modal-amount').value = '';
+        
+        onTemplateAccountChange();
+        document.getElementById('add-template-modal').classList.remove('hidden');
+    };
+
+    window.closeAddTemplateModal = function() {
+        document.getElementById('add-template-modal').classList.add('hidden');
+    };
+
+    window.onTemplateAccountChange = function() {
+        const account = document.getElementById('temp-modal-account').value;
+        const catSelect = document.getElementById('temp-modal-category');
+
+        const filtered = state.categories.filter(c => c.account === account && c.type === 'expense');
+        catSelect.innerHTML = filtered.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+    };
+
+    window.saveCustomTemplate = async function() {
+        const title = document.getElementById('temp-modal-title').value.trim();
+        const account = document.getElementById('temp-modal-account').value;
+        const category = document.getElementById('temp-modal-category').value;
+        const amount = parseFloat(document.getElementById('temp-modal-amount').value);
+        const payer = document.getElementById('temp-modal-payer').value;
+        const payMethod = document.getElementById('temp-modal-pay-method').value;
+
+        if (!title || isNaN(amount) || amount <= 0) {
+            showToast('請完整填寫項目名稱及正確金額！', 'danger');
+            return;
+        }
+
+        showLoading(true);
+        const payload = {
+            bookId: state.syncCode,
+            title,
+            account,
+            type: 'expense',
+            category,
+            amount,
+            payer,
+            payMethod
+        };
+
+        try {
+            if (isFirebaseReady) {
+                const templatesCol = collection(db, 'artifacts', appId, 'public', 'data', 'templates');
+                await addDoc(templatesCol, payload);
+            } else {
+                payload.id = 't_' + Date.now();
+                state.templates.push(payload);
+                saveLocalData();
+                renderSettingsView();
+            }
+            showToast('常用範本新增成功', 'success');
+            closeAddTemplateModal();
+            renderApp();
+        } catch (e) {
+            console.error(e);
+            showToast('新增常用項目失敗，請確認雲端連線。', 'danger');
+        } finally {
+            showLoading(false);
+        }
+    };
+
+    window.deleteTemplate = async function(id) {
+        openConfirmModal(
+            '確定刪除常用項目嗎？',
+            '刪除此範本不會影響您已記帳的資料。',
+            async () => {
+                showLoading(true);
+                try {
+                    if (isFirebaseReady) {
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'templates', id);
+                        await deleteDoc(docRef);
+                    } else {
+                        state.templates = state.templates.filter(t => t.id !== id);
+                        saveLocalData();
+                        renderSettingsView();
+                    }
+                    showToast('常用快捷範本已刪除', 'success');
+                } catch (e) {
+                    console.error(e);
+                    showToast('刪除失敗', 'danger');
+                } finally {
+                    showLoading(false);
+                }
+            }
+        );
+    };
+
+    window.backupLocalJSON = function() {
+        const data = {
+            syncCode: state.syncCode,
+            currentUser: state.currentUser,
+            partnerUser: state.partnerUser,
+            records: state.records,
+            categories: state.categories,
+            templates: state.templates
+        };
+
+        const str = JSON.stringify(data, null, 2);
+        const blob = new Blob([str], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `雙人生活記帳_${state.syncCode}_全部備份.json`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast('記帳資料完整 JSON 備份已下載！', 'success');
+    };
+
+    window.restoreLocalJSON = function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            try {
+                const parsed = JSON.parse(e.target.result);
+                if (!parsed.records || !parsed.syncCode) {
+                    showToast('不合法的備份檔案結構', 'danger');
+                    return;
+                }
+
+                openConfirmModal(
+                    '確定匯入並覆蓋現有資料嗎？',
+                    `此動作將覆蓋同步碼「${parsed.syncCode}」下的所有紀錄與分類。若是雲端模式，將會直接寫入雲端。`,
+                    async () => {
+                        showLoading(true);
+                        try {
+                            if (isFirebaseReady) {
+                                const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'records');
+                                const categoriesCol = collection(db, 'artifacts', appId, 'public', 'data', 'categories');
+                                const templatesCol = collection(db, 'artifacts', appId, 'public', 'data', 'templates');
+
+                                for (let r of parsed.records) {
+                                    delete r.id;
+                                    r.bookId = parsed.syncCode;
+                                    await addDoc(recordsCol, r);
+                                }
+                                for (let c of parsed.categories) {
+                                    delete c.id;
+                                    c.bookId = parsed.syncCode;
+                                    await addDoc(categoriesCol, c);
+                                }
+                                for (let t of parsed.templates) {
+                                    delete t.id;
+                                    t.bookId = parsed.syncCode;
+                                    await addDoc(templatesCol, t);
+                                }
+                            } else {
+                                state.syncCode = parsed.syncCode;
+                                state.currentUser = parsed.currentUser || '男友阿明';
+                                state.partnerUser = parsed.partnerUser || '女友小美';
+                                state.records = parsed.records;
+                                state.categories = parsed.categories;
+                                state.templates = parsed.templates;
+                                saveLocalData();
+                            }
+
+                            showToast('備份資料已成功恢復並套用！', 'success');
+                            renderApp();
+                        } catch (err) {
+                            console.error(err);
+                            showToast('還原時發生錯誤，請重試', 'danger');
+                        } finally {
+                            showLoading(false);
+                        }
+                    }
+                );
+            } catch (err) {
+                showToast('讀取備份檔案出錯，請確認 JSON 格式正確', 'danger');
+            }
+        };
+        reader.readAsText(file);
+        event.target.value = '';
+    };
+
+    function renderAiChatHistory() {
+        const container = document.getElementById('chat-messages-container');
+        if (!container) return;
+
+        container.innerHTML = state.chatHistory.map(msg => {
+            const isUser = msg.role === 'user';
+            const bubbleBg = isUser 
+                ? 'bg-sky-500 text-white rounded-br-none self-end ml-12' 
+                : 'bg-white text-slate-800 rounded-bl-none self-start mr-12 border border-slate-100';
+            const align = isUser ? 'justify-end' : 'justify-start';
+            const name = isUser ? '您' : '🐰 兔兔理財小助理';
+
+            return `
+                <div class="flex flex-col ${align} space-y-1">
+                    <span class="text-[10px] text-slate-400 font-bold px-1">${name}</span>
+                    <div class="px-3.5 py-2.5 rounded-2xl text-xs md:text-sm shadow-sm leading-relaxed ${bubbleBg}">
+                        ${msg.text.replace(/\n/g, '<br>')}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Auto-scroll
+        setTimeout(() => {
+            container.scrollTop = container.scrollHeight;
+        }, 50);
+    }
+
+    window.sendAiChatMessage = async function(customPrompt = null) {
+        const inputEl = document.getElementById('chat-input-text');
+        const text = customPrompt || inputEl.value.trim();
+        if (!text) return;
+
+        if (!customPrompt) inputEl.value = '';
+
+        // Add user msg
+        state.chatHistory.push({ role: 'user', text: text });
+        renderAiChatHistory();
+
+        // Show typing indicator
+        const container = document.getElementById('chat-messages-container');
+        const typingId = 'chat-typing-indicator';
+        const typingEl = document.createElement('div');
+        typingEl.id = typingId;
+        typingEl.className = "flex justify-start space-y-1 flex-col";
+        typingEl.innerHTML = `
+            <span class="text-[10px] text-slate-400 font-bold px-1">🐰 起粑理財小助理</span>
+            <div class="px-4 py-3 rounded-2xl bg-white border border-slate-100 shadow-sm text-xs text-slate-400 flex items-center gap-2 self-start rounded-bl-none">
+                <div class="flex gap-1">
+                    <span class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></span>
+                    <span class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></span>
+                    <span class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.4s"></span>
+                </div>
+                <span>兔兔正在抓取當月收支並思考中...</span>
+            </div>
+        `;
+        container.appendChild(typingEl);
+        container.scrollTop = container.scrollHeight;
+
+        try {
+            // Extract current monthly records context
+            const currentMonthRecords = state.records.filter(r => r.date && r.date.startsWith(state.selectedMonth));
+            
+            // Format ledger context
+            const recordsSummary = currentMonthRecords.map(r => ({
+                日期: r.date,
+                帳戶: r.account === 'living' ? '生活開銷' : '起粑開銷',
+                收支: r.type === 'income' ? '收入' : '支出',
+                金額: r.amount,
+                分類: r.category,
+                名稱: r.title,
+                付款人: r.payer,
+                備註: r.note || ''
+            }));
+
+            const ledgerContext = `
+            我們當前 ${state.selectedMonth} 的記帳同步帳本狀態：
+            - 當前主記帳人：${state.currentUser}
+            - 伴侶名稱：${state.partnerUser}
+            - 愛兔名字：起粑🐰
+            - 本月記帳筆數：${recordsSummary.length} 筆
+            - 明細資料：${JSON.stringify(recordsSummary)}
+            `;
+
+            const systemPrompt = `你是一個溫暖、親切的伴侶與起粑🐰（一隻非常受寵愛的兔子）的專屬記帳小助手，名叫『起粑理財小助理』。
+            你非常熱愛起粑、了解起粑的護理知識（包括牧草種類如提摩西、燕麥草、飼料、健檢等花費），且非常幽默擅長夫妻或情侶間的理財規劃。
+            請根據使用者傳送的提問以及我為你注入的【當月記帳數據】進行貼心、生動的回答，多用「起粑🐰」來提及兔子的事情。
+            請使用繁體中文（台灣習慣用語，如『發票』、『電子支付』、『便當』、『提摩西草』等）。
+            請適時加入一些可愛的表情符號 (e.g. 🐰, 🐾, 🥗, 💸) 增加趣味性！並適時給出情侶的理財省錢妙招。`;
+
+            const apiKey = ""; // Canvas Injector handles API keys at runtime
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+            const payload = {
+                contents: [{
+                    role: "user",
+                    parts: [
+                        { text: ledgerContext },
+                        { text: `使用者提問：${text}` }
+                    ]
+                }],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                }
+            };
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) throw new Error("AI Reply API Failed");
+
+            const result = await response.json();
+            const reply = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            // Remove typing indicator
+            const indicator = document.getElementById(typingId);
+            if (indicator) indicator.remove();
+
+            if (reply) {
+                state.chatHistory.push({ role: 'assistant', text: reply });
+                renderAiChatHistory();
+            } else {
+                throw new Error("No text response");
+            }
+
+        } catch (err) {
+            console.error("Chat error:", err);
+            const indicator = document.getElementById(typingId);
+            if (indicator) indicator.remove();
+
+            state.chatHistory.push({ role: 'assistant', text: '抱歉，兔兔網路開小差了... 🕳️🐰 請再傳送一次您的問題，或是檢查網路連線喔！' });
+            renderAiChatHistory();
+        }
+    };
+
+    window.triggerQuickAiAnalysis = function(type) {
+        let promptText = "";
+        if (type === 'audit') {
+            promptText = "📊 請幫我們進行本月的整體財務體檢，分析我們的生活與起粑支出比例是否平衡？有哪些項目花費太誇張可以省下來？";
+        } else if (type === 'rabbit') {
+            promptText = "🌾 幫我分析我們本月的「起粑開銷」。牧草、飼料、醫療保健等費用分佈合理嗎？有沒有照顧起粑上的省錢建議？";
+        } else if (type === 'couple') {
+            promptText = "💰 為了我們的幸福未來，請給我們一個「情侶雙人一週省錢挑戰」的具體規劃 and 鼓勵！";
+        }
+        sendAiChatMessage(promptText);
+    };
+
+    function renderApp() {
+        document.getElementById('header-sync-badge').innerHTML = `
+            <i class="fa-solid fa-users text-xs"></i> <span>同步代碼: ${state.syncCode}</span>
+        `;
+        
+        if (state.currentView === 'home') {
+            renderHomeView();
+        } else if (state.currentView === 'records') {
+            renderRecordsView();
+        } else if (state.currentView === 'stats') {
+            renderStatsView();
+        } else if (state.currentView === 'categories') {
+            renderCategoriesView();
+        } else if (state.currentView === 'settings') {
+            renderSettingsView();
+        } else if (state.currentView === 'ai-chat') {
+            renderAiChatHistory();
+        }
+    }
+
+    window.changeOverviewMonth = function(direction) {
+        const parts = state.selectedMonth.split('-');
+        let year = parseInt(parts[0]);
+        let month = parseInt(parts[1]);
+
+        if (direction === 'prev') {
+            month -= 1;
+            if (month === 0) {
+                month = 12;
+                year -= 1;
+            }
+        } else if (direction === 'next') {
+            month += 1;
+            if (month === 13) {
+                month = 1;
+                year += 1;
+            }
+        }
+        
+        state.selectedMonth = `${year}-${String(month).padStart(2, '0')}`;
+        renderHomeView();
+    };
+
+</script>
+
+<header class="bg-white shadow-sm border-b border-slate-100 sticky top-0 z-40 px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+        <div class="w-10 h-10 bg-gradient-to-tr from-brand-living to-brand-rabbit rounded-xl flex items-center justify-center text-white shadow-md">
+            <i class="fa-solid fa-paw text-lg animate-pulse"></i>
+        </div>
+        <div>
+            <h1 class="text-base font-black tracking-tight text-slate-800 flex items-center gap-1.5">
+                雙兔生活記帳 <span class="text-xs font-normal text-slate-400 hidden sm:inline">雙人記帳好助手</span>
+            </h1>
+            <div id="header-sync-badge" class="text-[10px] text-slate-500 flex items-center gap-1 font-semibold mt-0.5">
+                <i class="fa-solid fa-users"></i> 載入中...
+            </div>
+        </div>
+    </div>
+
+    <!-- Desktop Navigation View tabs -->
+    <nav class="hidden md:flex items-center gap-1">
+        <a href="#" onclick="switchView('home')" class="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors">首頁總覽</a>
+        <a href="#" onclick="switchView('records')" class="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors">歷史紀錄</a>
+        <a href="#" onclick="switchView('stats')" class="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors">統計圖表</a>
+        <a href="#" onclick="switchView('ai-chat')" class="px-4 py-2 rounded-xl text-sm font-bold text-brand-rabbit bg-orange-50 hover:bg-orange-100 hover:text-orange-800 transition-all flex items-center gap-1"><i class="fa-solid fa-wand-magic-sparkles text-xs"></i> AI 分析助理</a>
+        <a href="#" onclick="switchView('categories')" class="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors">分類管理</a>
+        <a href="#" onclick="switchView('settings')" class="px-4 py-2 rounded-xl text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors">成員設定</a>
+        <button onclick="resetRecordForm(); switchView('add');" class="ml-2 bg-gradient-to-r from-brand-living to-brand-livingDark text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm flex items-center gap-1 hover:brightness-105 transition-all">
+            <i class="fa-solid fa-plus text-[10px]"></i> 新增收支
+        </button>
+    </nav>
+</header>
+
+<main class="flex-grow max-w-4xl w-full mx-auto p-4 md:py-6">
+
+    <!-- VIEW 1: HOME PAGE OVERVIEW -->
+    <section id="view-home" class="app-view space-y-5">
+        <!-- Floating AI Notification Banner -->
+        <div onclick="switchView('ai-chat')" class="bg-gradient-to-r from-orange-500 via-amber-500 to-brand-rabbit p-3.5 rounded-2xl text-white shadow-md flex items-center justify-between cursor-pointer hover:brightness-105 transition-all animate-bounce">
+            <div class="flex items-center gap-3">
+                <span class="text-2xl">🐰</span>
+                <div>
+                    <h4 class="text-xs font-bold">新上線！「起粑 AI 記帳分析助理」</h4>
+                    <p class="text-[10px] opacity-90 mt-0.5">點此詢問助理：自動診斷本月花費比例 & 提供起粑照護省錢妙招！</p>
+                </div>
+            </div>
+            <i class="fa-solid fa-circle-chevron-right text-lg"></i>
+        </div>
+
+        <div class="flex items-center justify-between bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm">
+            <button onclick="changeOverviewMonth('prev')" class="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-600 cursor-pointer transition-colors">
+                <i class="fa-solid fa-chevron-left text-sm"></i>
+            </button>
+            <span id="overview-month-label" class="font-extrabold text-base text-slate-800">載入中...</span>
+            <button onclick="changeOverviewMonth('next')" class="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-slate-100 text-slate-600 cursor-pointer transition-colors">
+                <i class="fa-solid fa-chevron-right text-sm"></i>
+            </button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+            <div class="bg-gradient-to-br from-sky-50 to-white p-4 rounded-2xl shadow-sm border border-sky-100 flex flex-col justify-between">
+                <div>
+                    <span class="text-[10px] font-bold text-brand-living bg-sky-100/50 px-2 py-0.5 rounded-md">生活開銷</span>
+                    <h3 class="text-slate-500 text-[11px] font-semibold mt-1.5">當月生活支出</h3>
+                </div>
+                <div id="home-living-exp" class="text-xl font-black text-slate-800 mt-2">$0</div>
+            </div>
+
+            <div class="bg-gradient-to-br from-amber-50/70 to-white p-4 rounded-2xl shadow-sm border border-amber-100/50 flex flex-col justify-between">
+                <div>
+                    <span class="text-[10px] font-bold text-brand-rabbit bg-amber-100/50 px-2 py-0.5 rounded-md">起粑開銷</span>
+                    <h3 class="text-slate-500 text-[11px] font-semibold mt-1.5">當月起粑支出</h3>
+                </div>
+                <div id="home-rabbit-exp" class="text-xl font-black text-slate-800 mt-2">$0</div>
+            </div>
+
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
+                <div>
+                    <span class="text-[10px] font-bold text-rose-500 bg-rose-50 px-2 py-0.5 rounded-md">雙帳戶支出加總</span>
+                    <h3 class="text-slate-500 text-[11px] font-semibold mt-1.5">本月總支出</h3>
+                </div>
+                <div id="home-total-exp" class="text-xl font-black text-slate-800 mt-2">$0</div>
+            </div>
+
+            <div id="home-net-card" class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
+                <div>
+                    <span class="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">當月淨存/超支</span>
+                    <h3 class="text-slate-500 text-[11px] font-semibold mt-1.5">本月收支差額</h3>
+                </div>
+                <div id="home-net-saving" class="text-xl font-black text-slate-800 mt-2">$0</div>
+            </div>
+
+            <div class="col-span-2 bg-white p-3.5 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                        <i class="fa-solid fa-hand-holding-dollar text-sm"></i>
+                    </div>
+                    <div>
+                        <h4 class="text-slate-500 text-[10px] font-bold">本月總收入</h4>
+                        <p id="home-total-income" class="text-base font-extrabold text-slate-800">$0</p>
+                    </div>
+                </div>
+                <span class="text-xs text-slate-400 font-medium">薪資、兼職與其他</span>
+            </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-2">
+            <h4 class="text-xs font-bold text-slate-400 flex items-center gap-1">
+                <i class="fa-solid fa-chart-line"></i> 收支差異分析
+            </h4>
+            <div id="mom-comparison-text" class="pt-1">
+                <div class="h-4 bg-slate-100 rounded-md animate-pulse w-2/3"></div>
+            </div>
+        </div>
+
+        <div class="space-y-2">
+            <div class="flex items-center justify-between">
+                <h3 class="text-sm font-bold text-slate-600 flex items-center gap-1.5">
+                    <i class="fa-solid fa-wand-magic-sparkles text-brand-living"></i> 常用項目快速記帳
+                </h3>
+                <span class="text-[10px] text-slate-400">點按立即帶入</span>
+            </div>
+            <div id="quick-templates-container" class="flex gap-2 overflow-x-auto pb-1.5 hide-scrollbar"></div>
+        </div>
+
+        <div class="space-y-3">
+            <div class="flex items-center justify-between">
+                <h3 class="text-sm font-bold text-slate-600 flex items-center gap-1.5">
+                    <i class="fa-solid fa-clock-rotate-left"></i> 最近記帳紀錄
+                </h3>
+                <button onclick="switchView('records')" class="text-xs font-semibold text-brand-living hover:underline">查看全部明細 <i class="fa-solid fa-angle-right text-[10px]"></i></button>
+            </div>
+            <div id="recent-records-container" class="space-y-2.5"></div>
+        </div>
+    </section>
+
+    <!-- VIEW 2: RECORDS LIST AND ADVANCED SEARCH -->
+    <section id="view-records" class="app-view space-y-4 hidden">
+        <div class="flex items-center justify-between">
+            <h2 class="text-base font-extrabold text-slate-800">歷史收支明細</h2>
+            <div class="flex items-center gap-2">
+                <button onclick="toggleFilterPanel()" class="bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors">
+                    <i class="fa-solid fa-sliders"></i> 進階篩選
+                </button>
+                <button onclick="exportToCSV()" class="bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-colors">
+                    <i class="fa-solid fa-file-csv"></i> 匯出
+                </button>
+            </div>
+        </div>
+
+        <div id="advanced-filter-panel" class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4 hidden transition-all">
+            <h3 class="text-xs font-black text-slate-400 uppercase tracking-wider mb-2">多維度篩選器</h3>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 mb-1">所屬帳本</label>
+                    <select id="filter-account" onchange="triggerSearchFilter()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-2 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                        <option value="all">所有開銷帳戶</option>
+                        <option value="living">生活開銷</option>
+                        <option value="rabbit">起粑開銷</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 mb-1">收支類型</label>
+                    <select id="filter-type" onchange="triggerSearchFilter()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-2 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                        <option value="all">所有類型</option>
+                        <option value="expense">支出</option>
+                        <option value="income">收入</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 mb-1">消費分類</label>
+                    <select id="filter-category" onchange="triggerSearchFilter()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-2 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                        <option value="all">所有消費分類</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 mb-1">付款或紀錄人</label>
+                    <select id="filter-payer" onchange="triggerSearchFilter()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-2 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                        <option value="all">所有人</option>
+                        <option value="共同分攤">共同分攤</option>
+                        <option value="男友阿明">男友阿明</option>
+                        <option value="女友小美">女友小美</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 mb-1">金額下限</label>
+                    <input type="number" id="filter-min-amount" placeholder="0" oninput="triggerSearchFilter()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 mb-1">金額上限</label>
+                    <input type="number" id="filter-max-amount" placeholder="無上限" oninput="triggerSearchFilter()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 mb-1">日期起點</label>
+                    <input type="date" id="filter-date-from" onchange="triggerSearchFilter()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-2 py-1 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 mb-1">日期終點</label>
+                    <input type="date" id="filter-date-to" onchange="triggerSearchFilter()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-2 py-1 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                </div>
+            </div>
+
+            <div class="pt-2 flex gap-2">
+                <div class="relative flex-grow">
+                    <input type="text" id="filter-keyword" placeholder="搜尋項目名稱、備註..." oninput="triggerSearchFilter()" class="w-full bg-slate-50 border border-slate-100 rounded-xl pl-9 pr-3 py-2 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                </div>
+                <button onclick="resetSearchFilters()" class="bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 py-2 rounded-xl text-xs font-bold transition-colors">
+                    重設篩選
+                </button>
+            </div>
+        </div>
+
+        <div id="records-list-container" class="space-y-4"></div>
+    </section>
+
+    <!-- VIEW 3: NEW RECORD ADDITION / EDIT FORM -->
+    <section id="view-add" class="app-view hidden max-w-xl mx-auto">
+        <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-5">
+            <div class="flex items-center justify-between">
+                <h2 id="form-title" class="text-base font-extrabold text-slate-800">新增收支明細</h2>
+                <!-- AI Receipt Parser Button -->
+                <button type="button" onclick="triggerAiReceiptParsing()" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-105 text-white px-3 py-2 rounded-xl text-[11px] font-black flex items-center gap-1.5 shadow-md cursor-pointer transition-all">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> 🪄 AI 辨識發票/收據
+                </button>
+            </div>
+
+            <form onsubmit="saveRecordSubmit(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1.5">消費日期與時間</label>
+                    <input type="date" id="rec-date" required class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5">所屬帳本</label>
+                        <select id="rec-account" onchange="onAccountChange()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
+                            <option value="living">生活開銷</option>
+                            <option value="rabbit">起粑開銷</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5">交易類型</label>
+                        <select id="rec-type" onchange="onAccountChange()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
+                            <option value="expense">支出 (-)</option>
+                            <option value="income">收入 (+)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1.5">消費分類</label>
+                    <select id="rec-category" required class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1.5">項目名稱（選填，未填預設為分類名）</label>
+                    <input type="text" id="rec-title" placeholder="例如：提摩西草、全聯買菜、麥當勞" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1.5">交易金額 (TWD)</label>
+                    <div class="relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-semibold">NT$</span>
+                        <input type="number" id="rec-amount" required placeholder="0" class="w-full bg-slate-50 border border-slate-100 rounded-xl pl-11 pr-3 py-2 text-base font-extrabold focus:ring-1 focus:ring-brand-living outline-none">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5">付款/交易人</label>
+                        <select id="rec-payer" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5">付款方式</label>
+                        <select id="rec-pay-method" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
+                            <option value="現金">💵 現金</option>
+                            <option value="信用卡">💳 信用卡</option>
+                            <option value="轉帳">🏦 轉帳</option>
+                            <option value="電子支付">📱 電子支付</option>
+                            <option value="其他">❓ 其他</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1.5">備註說明</label>
+                    <textarea id="rec-notes" rows="2" placeholder="詳細內容、分攤細節、買給誰等..." class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium resize-none"></textarea>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1.5">上傳收據、發票或照片 (自動無損壓縮)</label>
+                    <p class="text-[10px] text-purple-600 font-bold mb-1"><i class="fa-solid fa-circle-info"></i> 💡 點選上方「🪄 AI 辨識發票/收據」可自動填妥整張記帳表單喔！</p>
+                    <div class="flex items-center gap-3">
+                        <label class="flex flex-col items-center justify-center w-20 h-20 bg-slate-50 border-2 border-dashed border-slate-200 hover:border-brand-living rounded-xl cursor-pointer transition-colors group">
+                            <i class="fa-solid fa-camera text-slate-400 group-hover:text-brand-living text-lg"></i>
+                            <span class="text-[9px] text-slate-400 group-hover:text-brand-living mt-1 font-bold">選取相片</span>
+                            <input type="file" accept="image/*" multiple onchange="handleImageSelect(event)" class="hidden">
+                        </label>
+                        <div id="form-image-previews" class="flex gap-2 overflow-x-auto hide-scrollbar"></div>
+                    </div>
+                    <p id="upload-status-indicator" class="text-xs text-brand-living font-bold mt-1.5"></p>
+                </div>
+
+                <div class="flex gap-2.5 pt-3">
+                    <button type="button" onclick="switchView('home')" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer">
+                        取消
+                    </button>
+                    <button type="submit" class="flex-1 bg-gradient-to-r from-brand-living to-brand-livingDark text-white py-2.5 rounded-xl text-sm font-extrabold shadow-md hover:brightness-105 transition-all cursor-pointer">
+                        確定儲存
+                    </button>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    <!-- VIEW 4: STATISTICAL CHARTS AND INSIGHTS -->
+    <section id="view-stats" class="app-view space-y-5 hidden">
+        <div class="flex items-center justify-between">
+            <h2 class="text-base font-extrabold text-slate-800">每月消費數據統計</h2>
+            <input type="month" id="stats-month-selector" onchange="onStatsMonthChange()" class="bg-white border border-slate-200 rounded-xl px-3.5 py-1.5 text-xs font-bold text-slate-700 outline-none focus:ring-1 focus:ring-brand-living">
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div class="bg-white p-3.5 rounded-2xl border border-slate-100 text-center">
+                <span class="text-[10px] font-bold text-emerald-600 block">當月總收入</span>
+                <span id="stat-total-income" class="text-base font-extrabold text-slate-800 block mt-1">$0</span>
+            </div>
+            <div class="bg-white p-3.5 rounded-2xl border border-slate-100 text-center">
+                <span class="text-[10px] font-bold text-rose-500 block">當月總支出</span>
+                <span id="stat-total-expense" class="text-base font-extrabold text-slate-800 block mt-1">$0</span>
+            </div>
+            <div class="bg-white p-3.5 rounded-2xl border border-slate-100 text-center">
+                <span class="text-[10px] font-bold text-brand-living block">生活開銷支出</span>
+                <span id="stat-living-exp" class="text-base font-extrabold text-slate-800 block mt-1">$0</span>
+            </div>
+            <div class="bg-white p-3.5 rounded-2xl border border-slate-100 text-center">
+                <span class="text-[10px] font-bold text-brand-rabbit block">起粑開銷支出</span>
+                <span id="stat-rabbit-exp" class="text-base font-extrabold text-slate-800 block mt-1">$0</span>
+            </div>
+            <div id="stat-net-card" class="col-span-2 bg-white p-3 flex items-center justify-between px-4 rounded-2xl border border-slate-100">
+                <span class="text-xs font-bold text-slate-500">本月結餘收支差</span>
+                <span id="stat-net-saving" class="text-base font-black text-slate-800">$0</span>
+            </div>
+            <div class="col-span-2 bg-white p-3 flex items-center justify-between px-4 rounded-2xl border border-slate-100">
+                <span class="text-xs font-bold text-slate-500">本月最高支出項目類別</span>
+                <span id="stat-highest-category" class="font-extrabold text-slate-800">載入中...</span>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
+                <h3 class="text-xs font-black text-slate-400 mb-3 uppercase tracking-wider">生活開銷類別占比</h3>
+                <div class="relative h-60 flex items-center justify-center">
+                    <canvas id="chart-living-cats" class="w-full h-full"></canvas>
+                    <div id="living-chart-fallback" class="hidden text-slate-400 text-xs text-center py-10">此月份無生活開銷</div>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between">
+                <h3 class="text-xs font-black text-slate-400 mb-3 uppercase tracking-wider">起粑開銷類別占比</h3>
+                <div class="relative h-60 flex items-center justify-center">
+                    <canvas id="chart-rabbit-cats" class="w-full h-full"></canvas>
+                    <div id="rabbit-chart-fallback" class="hidden text-slate-400 text-xs text-center py-10">此月份無起粑開銷</div>
+                </div>
+            </div>
+
+            <div class="col-span-1 md:col-span-2 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                <h3 class="text-xs font-black text-slate-400 mb-3 uppercase tracking-wider">當月每日支出趨勢</h3>
+                <div class="h-44">
+                    <canvas id="chart-daily-trend" class="w-full h-full"></canvas>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- NEW VIEW: AI ASSISTANT CHATBOT -->
+    <section id="view-ai-chat" class="app-view space-y-4 hidden max-w-2xl mx-auto">
+        <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col h-[75vh] justify-between">
+            
+            <!-- Chat Head -->
+            <div class="flex items-center gap-3 border-b border-slate-100 pb-3">
+                <span class="text-3xl">🐰</span>
+                <div>
+                    <h3 class="font-extrabold text-slate-800 text-sm">起粑 AI 智能理財分析師</h3>
+                    <p class="text-[10px] text-slate-400">即時根據您本月的收支紀錄與起粑花費提供省錢秘笈 💫</p>
+                </div>
+            </div>
+
+            <!-- Preloaded AI action tags -->
+            <div class="flex gap-2 overflow-x-auto py-2.5 border-b border-slate-100 hide-scrollbar flex-shrink-0">
+                <button onclick="triggerQuickAiAnalysis('audit')" class="flex-shrink-0 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-100 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all">
+                    📊 診斷本月收支
+                </button>
+                <button onclick="triggerQuickAiAnalysis('rabbit')" class="flex-shrink-0 bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-100 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all">
+                    🌾 起粑開銷合適度
+                </button>
+                <button onclick="triggerQuickAiAnalysis('couple')" class="flex-shrink-0 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-100 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all">
+                    💰 情侶省錢挑戰
+                </button>
+            </div>
+
+            <!-- Messages Window -->
+            <div id="chat-messages-container" class="flex-grow overflow-y-auto py-4 space-y-4 flex flex-col hide-scrollbar">
+                <!-- Chat messages stream via JS -->
+            </div>
+
+            <!-- Message Input Form -->
+            <div class="flex gap-2 border-t border-slate-100 pt-3 flex-shrink-0">
+                <input type="text" id="chat-input-text" placeholder="問問兔兔：『我們這個月飲料喝太多了嗎？』" onkeypress="if(event.key === 'Enter') sendAiChatMessage()" class="flex-grow bg-slate-50 border border-slate-100 rounded-xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                <button onclick="sendAiChatMessage()" class="bg-gradient-to-tr from-brand-living to-sky-600 hover:brightness-105 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all">
+                    傳送
+                </button>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- VIEW 5: CATEGORY MANAGEMENT -->
+    <section id="view-categories" class="app-view space-y-4 hidden">
+        <div class="flex items-center justify-between">
+            <h2 class="text-base font-extrabold text-slate-800">消費類別管理</h2>
+            <button onclick="openAddCategoryModal()" class="bg-gradient-to-r from-brand-living to-brand-livingDark text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm flex items-center gap-1 hover:brightness-105 transition-all">
+                <i class="fa-solid fa-plus text-[10px]"></i> 自訂類別
+            </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="space-y-2.5">
+                <div class="flex items-center gap-2 px-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-brand-living"></span>
+                    <h3 class="text-xs font-extrabold text-slate-500 uppercase tracking-wider">生活開銷分類</h3>
+                </div>
+                <div id="cat-list-living" class="space-y-2"></div>
+            </div>
+
+            <div class="space-y-2.5">
+                <div class="flex items-center gap-2 px-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-brand-rabbit"></span>
+                    <h3 class="text-xs font-extrabold text-slate-500 uppercase tracking-wider">起粑開銷分類</h3>
+                </div>
+                <div id="cat-list-rabbit" class="space-y-2"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- VIEW 6: SETTINGS, COLLABORATION, BACKUPS -->
+    <section id="view-settings" class="app-view space-y-5 hidden max-w-xl mx-auto">
+        <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
+            <h2 class="text-base font-extrabold text-slate-800">帳本與成員設定</h2>
+            
+            <div class="space-y-3.5">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1.5">雲端共享同步代碼（輸入相同同步碼可跨裝置共享）</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="sync-code-input" placeholder="LOVERABBIT2026" class="flex-grow bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm font-extrabold tracking-wide focus:ring-1 focus:ring-brand-living outline-none">
+                    </div>
+                    <p class="text-[10px] text-slate-400 mt-1">💡 當你與女友輸入相同的代碼時，就可以在不同手機上同時讀取與新增相同的記帳資料。</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5">主記帳人（您自己）</label>
+                        <input type="text" id="user-name-input" placeholder="女友小美" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm font-semibold focus:ring-1 focus:ring-brand-living outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5">第二成員（您的伴侶）</label>
+                        <input type="text" id="partner-name-input" placeholder="男友阿明" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm font-semibold focus:ring-1 focus:ring-brand-living outline-none">
+                    </div>
+                </div>
+
+                <button onclick="saveGeneralSettings()" class="w-full bg-gradient-to-r from-brand-living to-brand-livingDark text-white py-2.5 rounded-xl text-xs font-black shadow-sm flex items-center justify-center gap-1 hover:brightness-105 transition-all">
+                    儲存成員與同步設定
+                </button>
+            </div>
+        </div>
+
+        <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-3">
+            <div class="flex items-center justify-between">
+                <h3 class="text-sm font-extrabold text-slate-800">常用快速項目管理</h3>
+                <button onclick="openAddTemplateModal()" class="text-xs font-bold text-brand-living hover:underline">新增範本</button>
+            </div>
+            
+            <div id="settings-templates-list" class="space-y-2 max-h-56 overflow-y-auto pr-1"></div>
+        </div>
+
+        <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-3">
+            <h3 class="text-sm font-extrabold text-slate-800">資料安全備份與匯入</h3>
+            
+            <div class="grid grid-cols-2 gap-3.5 pt-1">
+                <button onclick="backupLocalJSON()" class="flex flex-col items-center justify-center p-3.5 bg-slate-50 hover:bg-slate-100 border border-slate-100 rounded-xl transition-colors cursor-pointer text-center group">
+                    <i class="fa-solid fa-cloud-arrow-down text-slate-400 group-hover:text-brand-living text-xl"></i>
+                    <span class="text-xs font-bold text-slate-600 mt-1.5">匯出備份檔案</span>
+                    <span class="text-[9px] text-slate-400 mt-0.5">下載為 JSON 檔</span>
+                </button>
+
+                <label class="flex flex-col items-center justify-center p-3.5 bg-slate-50 hover:bg-slate-100 border border-slate-100 rounded-xl transition-colors cursor-pointer text-center group">
+                    <i class="fa-solid fa-file-import text-slate-400 group-hover:text-brand-living text-xl"></i>
+                    <span class="text-xs font-bold text-slate-600 mt-1.5">匯入備份檔案</span>
+                    <span class="text-[9px] text-slate-400 mt-0.5">讀取備份資料</span>
+                    <input type="file" accept=".json" onchange="restoreLocalJSON(event)" class="hidden">
+                </label>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<nav class="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 flex items-center justify-around py-2.5 px-2 z-40 shadow-lg rounded-t-2xl">
+    <a href="#" onclick="switchView('home')" data-view="home" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+        <i class="fa-solid fa-chart-pie text-lg text-brand-living font-bold"></i>
+        <span class="text-xs text-brand-living font-bold mt-0.5">首頁</span>
+    </a>
+    <a href="#" onclick="switchView('records')" data-view="records" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+        <i class="fa-solid fa-list-ul text-lg"></i>
+        <span class="text-xs mt-0.5">明細</span>
+    </a>
+    
+    <!-- Floating Quick Add Button -->
+    <div class="relative -top-5">
+        <button id="quick-add-fab" class="w-13 h-13 rounded-full bg-gradient-to-tr from-brand-living via-sky-500 to-brand-rabbit text-white flex items-center justify-center text-xl shadow-md border-4 border-white select-none hover:brightness-110 active:scale-95 transition-all">
+            <i class="fa-solid fa-plus"></i>
+        </button>
+    </div>
+
+    <a href="#" onclick="switchView('ai-chat')" data-view="ai-chat" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+        <i class="fa-solid fa-wand-magic-sparkles text-lg"></i>
+        <span class="text-xs mt-0.5">AI 助理</span>
+    </a>
+    <a href="#" onclick="switchView('settings')" data-view="settings" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+        <i class="fa-solid fa-gear text-lg"></i>
+        <span class="text-xs mt-0.5">成員設定</span>
+    </a>
+</nav>
+
+<!-- Context Popup sheet action popup -->
+<div id="action-menu-modal" class="fixed inset-0 bg-black/60 z-50 flex items-end justify-center hidden" onclick="closeRecordActionMenu()">
+    <div class="bg-white w-full max-w-md rounded-t-3xl p-5 space-y-4 shadow-xl translate-y-0 transition-transform duration-300" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between border-b border-slate-50 pb-2">
+            <h3 id="action-menu-title" class="font-extrabold text-slate-800 text-sm">管理收支明細</h3>
+            <button onclick="closeRecordActionMenu()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-sm"></i></button>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2.5 pb-2">
+            <button onclick="handleEditAction()" class="flex flex-col items-center gap-1.5 p-3 rounded-xl hover:bg-slate-50 text-slate-700 cursor-pointer transition-colors">
+                <div class="w-10 h-10 rounded-full bg-sky-50 text-sky-600 flex items-center justify-center">
+                    <i class="fa-solid fa-pen-to-square"></i>
+                </div>
+                <span class="text-xs font-bold">編輯此筆</span>
+            </button>
+            
+            <button onclick="handleCopyAction()" class="flex flex-col items-center gap-1.5 p-3 rounded-xl hover:bg-slate-50 text-slate-700 cursor-pointer transition-colors">
+                <div class="w-10 h-10 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center">
+                    <i class="fa-solid fa-copy"></i>
+                </div>
+                <span class="text-xs font-bold">複製新增</span>
+            </button>
+
+            <button onclick="handleDeleteAction()" class="flex flex-col items-center gap-1.5 p-3 rounded-xl hover:bg-rose-50 text-rose-600 cursor-pointer transition-colors">
+                <div class="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
+                    <i class="fa-solid fa-trash-can"></i>
+                </div>
+                <span class="text-xs font-bold text-rose-600">刪除明細</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Add Category modal -->
+<div id="add-category-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white w-full max-w-sm rounded-3xl p-5 space-y-4 shadow-xl" onclick="event.stopPropagation()">
+        <h3 class="font-extrabold text-slate-800 text-sm">新增自訂消費分類</h3>
+        
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">所屬帳本</label>
+                <select id="cat-modal-account" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+                    <option value="living">生活開銷</option>
+                    <option value="rabbit">起粑開銷</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">收支類型</label>
+                <select id="cat-modal-type" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+                    <option value="expense">支出</option>
+                    <option value="income">收入</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">分類名稱</label>
+                <input type="text" id="cat-modal-name" placeholder="例如：兔子保健食品、水電瓦斯" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">視覺代表色</label>
+                <select id="cat-modal-color" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+                    <option value="#f97316" style="color: #f97316;">橘色</option>
+                    <option value="#0ea5e9" style="color: #0ea5e9;">藍色</option>
+                    <option value="#ec4899" style="color: #ec4899;">粉紅色</option>
+                    <option value="#22c55e" style="color: #22c55e;">綠色</option>
+                    <option value="#ef4444" style="color: #ef4444;">紅色</option>
+                    <option value="#8b5cf6" style="color: #8b5cf6;">紫色</option>
+                    <option value="#eab308" style="color: #eab308;">黃色</option>
+                    <option value="#64748b" style="color: #64748b;">灰色</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">代表圖標</label>
+                <select id="cat-modal-icon" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+                    <option value="fa-tag">🏷️ 標籤</option>
+                    <option value="fa-utensils">🍴 餐飲外食</option>
+                    <option value="fa-bowl-food">🍲 飼料食品</option>
+                    <option value="fa-seedling">🌱 牧草相關</option>
+                    <option value="fa-stethoscope">🩺 醫療保健</option>
+                    <option value="fa-scissors">✂️ 美容清理</option>
+                    <option value="fa-hotel">🏨 寄宿託管</option>
+                    <option value="fa-cart-shopping">🛒 購物買菜</option>
+                    <option value="fa-house-chimney">🏠 日常居家</option>
+                    <option value="fa-car">🚗 交通用油</option>
+                    <option value="fa-film">🍿 娛樂約會</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="flex gap-2 pt-2">
+            <button onclick="closeAddCategoryModal()" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded-xl text-xs font-bold">
+                取消
+            </button>
+            <button onclick="saveCustomCategory()" class="flex-1 bg-brand-living text-white py-2 rounded-xl text-xs font-bold">
+                儲存分類
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Add Template Modal -->
+<div id="add-template-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white w-full max-w-sm rounded-3xl p-5 space-y-4 shadow-xl" onclick="event.stopPropagation()">
+        <h3 class="font-extrabold text-slate-800 text-sm">新增常用記帳範本</h3>
+        
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">快速範本名稱</label>
+                <input type="text" id="temp-modal-title" placeholder="例如：全家鮮乳、起粑提摩西草" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">所屬帳本</label>
+                <select id="temp-modal-account" onchange="onTemplateAccountChange()" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+                    <option value="living">生活開銷</option>
+                    <option value="rabbit">起粑開銷</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">消費分類</label>
+                <select id="temp-modal-category" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">預設交易金額 (TWD)</label>
+                <input type="number" id="temp-modal-amount" placeholder="0" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-bold focus:ring-1 focus:ring-brand-living">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">預設付款人</label>
+                <select id="temp-modal-payer" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+                    <option value="共同分攤">共同分攤</option>
+                    <option value="男友阿明">男友阿明</option>
+                    <option value="女友小美">女友小美</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">預設付款方式</label>
+                <select id="temp-modal-pay-method" class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+                    <option value="現金">💵 現金</option>
+                    <option value="信用卡">💳 信用卡</option>
+                    <option value="轉帳">🏦 轉帳</option>
+                    <option value="電子支付">📱 電子支付</option>
+                    <option value="其他">❓ 其他</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="flex gap-2 pt-2">
+            <button onclick="closeAddTemplateModal()" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 rounded-xl text-xs font-bold">
+                取消
+            </button>
+            <button onclick="saveCustomTemplate()" class="flex-1 bg-brand-living text-white py-2 rounded-xl text-xs font-bold">
+                儲存範本
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Confirmation dialog modal -->
+<div id="confirm-dialog-modal" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-white w-full max-w-sm rounded-3xl p-5 space-y-4 shadow-xl" onclick="event.stopPropagation()">
+        <div class="text-center space-y-2">
+            <div class="w-12 h-12 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center text-xl mx-auto">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <h3 id="confirm-title" class="font-black text-slate-800 text-sm">確認操作</h3>
+            <p id="confirm-body" class="text-xs text-slate-500 leading-relaxed">此操作將無法復原，您確定要繼續執行嗎？</p>
+        </div>
+
+        <div class="flex gap-2 pt-2">
+            <button onclick="closeConfirmModal()" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-xs font-bold">
+                取消
+            </button>
+            <button onclick="triggerConfirmAction()" class="flex-1 bg-rose-600 text-white py-2.5 rounded-xl text-xs font-bold">
+                確認執行
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Lightbox image viewer modal -->
+<div id="lightbox-modal" class="fixed inset-0 bg-black/90 z-50 flex flex-col justify-between p-4 hidden" onclick="closeLightbox()">
+    <div class="flex justify-end p-2">
+        <button onclick="closeLightbox()" class="text-white hover:text-slate-300 text-xl cursor-pointer p-2"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    
+    <div id="lightbox-images-container" class="flex-grow flex items-center justify-center overflow-y-auto"></div>
+    
+    <div class="text-center text-slate-400 text-xs py-4">點擊背景任何地方關閉</div>
+</div>
+
+<!-- Global loading spinner overlay -->
+<div id="global-loader" class="fixed inset-0 bg-black/30 backdrop-blur-[1px] z-50 flex flex-col items-center justify-center gap-3 hidden">
+    <div class="w-11 h-11 border-4 border-white/30 border-t-brand-living rounded-full animate-spin"></div>
+    <span class="text-white text-xs font-bold tracking-wider">正在處理雲端同步中...</span>
+</div>
+
+</body>
+</html>
