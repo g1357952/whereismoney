@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>雙人生活記帳 🐾 兩人與起粑的智能帳本</title>
+    <title>雙兔生活記帳 🐾 兩人與起粑的智能帳本</title>
     <!-- Tailwind CSS for modern design -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome for high-quality icons -->
@@ -38,7 +38,6 @@
         }
     </script>
     <style>
-        /* Custom scrollbar */
         ::-webkit-scrollbar {
             width: 6px;
             height: 6px;
@@ -130,25 +129,20 @@
 
     function cleanAndParseFirebaseConfig(inputStr) {
         let cleaned = inputStr.trim();
-        // Remove variable declarations like "const firebaseConfig = " or "var config = "
         cleaned = cleaned.replace(/^(const|let|var)\s+\w+\s*=\s*/i, '');
-        // Remove ending semicolon if present
         if (cleaned.endsWith(';')) {
             cleaned = cleaned.slice(0, -1);
         }
-        // If wrapped in parentheses, strip them
         cleaned = cleaned.replace(/^\((.*)\)$/s, '$1');
 
         try {
-            // First pass: try standard parsing
             return JSON.parse(cleaned);
         } catch (e) {
-            // Second pass: Leniently insert double-quotes for key-value styling and convert quotes
             try {
                 let jsonStyle = cleaned
-                    .replace(/([{,]\s*)([a-zA-Z0-9_$]+)\s*:/g, '$1"$2":') // Quotes key properties
-                    .replace(/:\s*'([^']*)'/g, ':"$1"') // Fix single quotes values
-                    .replace(/,\s*([}\]])/g, '$1'); // Eliminate trailing commas
+                    .replace(/([{,]\s*)([a-zA-Z0-9_$]+)\s*:/g, '$1"$2":') 
+                    .replace(/:\s*'([^']*)'/g, ':"$1"') 
+                    .replace(/,\s*([}\]])/g, '$1'); 
 
                 return JSON.parse(jsonStyle);
             } catch (err2) {
@@ -168,6 +162,7 @@
         syncCode: localStorage.getItem('ledger_sync_code') || 'LOVERABBIT2026',
         currentUser: localStorage.getItem('ledger_user_name') || '女友小美',
         partnerUser: localStorage.getItem('ledger_partner_name') || '男友阿明',
+        customGeminiKey: localStorage.getItem('custom_gemini_key') || '',
         records: [],
         categories: [],
         templates: [],
@@ -441,6 +436,9 @@ service cloud.firestore {
         const partnerInput = document.getElementById('partner-name-input');
         if (partnerInput) partnerInput.value = state.partnerUser;
 
+        const geminiInput = document.getElementById('gemini-key-input');
+        if (geminiInput) geminiInput.value = state.customGeminiKey;
+
         const storedConfigText = localStorage.getItem('custom_firebase_config');
         if (storedConfigText) {
             document.getElementById('custom-firebase-json').value = JSON.stringify(JSON.parse(storedConfigText), null, 2);
@@ -497,7 +495,6 @@ service cloud.firestore {
             } else {
                 if (icon) {
                     icon.className = icon.className.replace('text-brand-living font-bold', 'text-slate-400');
-                    // Add generic fallback
                     if (!icon.className.includes('text-slate-400')) {
                         icon.classList.add('text-slate-400');
                     }
@@ -786,7 +783,7 @@ service cloud.firestore {
         const colorClass = cat ? cat.color : '#64748b';
 
         const hasAttachment = r.images && r.images.length > 0;
-        const clipIcon = hasAttachment ? `<i class="fa-solid fa-paperclip text-slate-400 text-xs ml-1 hover:text-brand-living" onclick="viewAttachments('${r.id}', event)"></i>` : '';
+        const clipIcon = hasAttachment ? `<i class="fa-solid fa-paperclip text-slate-400 text-xs ml-1 hover:text-brand-living"></i>` : '';
 
         return `
             <div class="flex items-center justify-between p-3.5 bg-white rounded-xl border border-slate-100 hover:border-slate-200 hover:shadow-sm transition-all cursor-pointer" onclick="openRecordActionMenu('${r.id}')">
@@ -850,8 +847,49 @@ service cloud.firestore {
         const r = state.records.find(item => item.id === id);
         if (!r) return;
 
+        const isRabbit = r.account === 'rabbit';
+        const isIncome = r.type === 'income';
+        const sign = isIncome ? '+' : '-';
+        const amtColor = isIncome ? 'text-emerald-600' : (isRabbit ? 'text-orange-600' : 'text-slate-800');
+
+        const cat = state.categories.find(c => c.name === r.category);
+        const iconClass = cat ? cat.icon : 'fa-tag';
+        const colorClass = cat ? cat.color : '#64748b';
+
+        // Set Header details
+        document.getElementById('ins-icon').className = `fa-solid ${iconClass}`;
+        document.getElementById('ins-icon-wrapper').style.backgroundColor = colorClass;
+        document.getElementById('ins-title').innerText = r.title || r.category;
+        document.getElementById('ins-amount').innerText = `${sign}${formatCurrency(r.amount)}`;
+        document.getElementById('ins-amount').className = `text-2xl font-black ${amtColor}`;
+
+        // Set Table details
+        document.getElementById('ins-val-date').innerText = r.date || '無日期';
+        document.getElementById('ins-val-account').innerText = isRabbit ? '起粑開銷 🐾' : '生活開銷 🏠';
+        document.getElementById('ins-val-type').innerText = isIncome ? '收入 (+)' : '支出 (-)';
+        document.getElementById('ins-val-payer').innerText = r.payer || '共同分攤';
+        document.getElementById('ins-val-method').innerText = r.payMethod || '其他';
+        document.getElementById('ins-val-notes').innerText = r.note || '（未輸入備註）';
+        document.getElementById('ins-val-creator').innerText = `${r.createdBy || '未知'} (修改: ${r.updatedBy || '無'})`;
+
+        // Render attachments
+        const attContainer = document.getElementById('ins-attachments-container');
+        if (r.images && r.images.length > 0) {
+            document.getElementById('ins-attachments-section').classList.remove('hidden');
+            attContainer.innerHTML = r.images.map((img, idx) => `
+                <div class="relative w-20 h-20 rounded-xl overflow-hidden shadow-sm border border-slate-200 cursor-pointer" onclick="viewAttachments('${r.id}', event)">
+                    <img src="${img}" class="w-full h-full object-cover">
+                    <div class="absolute inset-0 bg-black/25 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                        <i class="fa-solid fa-magnifying-glass-plus text-white text-xs"></i>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            document.getElementById('ins-attachments-section').classList.add('hidden');
+            attContainer.innerHTML = '';
+        }
+
         const modal = document.getElementById('action-menu-modal');
-        document.getElementById('action-menu-title').innerText = `管理：${r.title || r.category}`;
         modal.classList.remove('hidden');
     };
 
@@ -1068,6 +1106,12 @@ service cloud.firestore {
             return;
         }
 
+        const key = state.customGeminiKey;
+        if (!key) {
+            showToast("您尚未在「設定」中填寫 Gemini API 金鑰，無法啟動 AI 發票辨識喔！", "warning");
+            return;
+        }
+
         const loader = document.getElementById('global-loader');
         const loaderText = loader.querySelector('span');
         
@@ -1094,8 +1138,7 @@ service cloud.firestore {
             
             你必須且只能回傳一個有效的 JSON 物件，不可以加上 Markdown \`\`\`json 的格式標記。`;
 
-            const apiKey = ""; 
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${key}`;
 
             const payload = {
                 contents: [{
@@ -1738,6 +1781,7 @@ service cloud.firestore {
         document.getElementById('sync-code-input').value = state.syncCode;
         document.getElementById('user-name-input').value = state.currentUser;
         document.getElementById('partner-name-input').value = state.partnerUser;
+        document.getElementById('gemini-key-input').value = state.customGeminiKey;
         
         const templateContainer = document.getElementById('settings-templates-list');
         if (templateContainer) {
@@ -1839,6 +1883,20 @@ service cloud.firestore {
         setTimeout(() => {
             location.reload();
         }, 1500);
+    };
+
+    window.saveCustomGeminiKey = function() {
+        const key = document.getElementById('gemini-key-input').value.trim();
+        state.customGeminiKey = key;
+        localStorage.setItem('custom_gemini_key', key);
+        showToast('Gemini API 金鑰設定成功！已經啟用 AI 發票辨識與智慧分析功能。🐾', 'success');
+    };
+
+    window.clearCustomGeminiKey = function() {
+        state.customGeminiKey = '';
+        localStorage.removeItem('custom_gemini_key');
+        document.getElementById('gemini-key-input').value = '';
+        showToast('已清除自訂 Gemini API 金鑰，系統將切換為起粑本地智慧分析。', 'info');
     };
 
     window.openAddTemplateModal = function() {
@@ -2031,6 +2089,47 @@ service cloud.firestore {
         event.target.value = '';
     };
 
+    function generateLocalAiResponse(userInput) {
+        const currentMonthRecords = state.records.filter(r => r.date && r.date.startsWith(state.selectedMonth));
+        let totalIncome = 0;
+        let totalExpense = 0;
+        let livingExpense = 0;
+        let rabbitExpense = 0;
+
+        currentMonthRecords.forEach(r => {
+            const amount = parseFloat(r.amount) || 0;
+            if (r.type === 'income') {
+                totalIncome += amount;
+            } else {
+                totalExpense += amount;
+                if (r.account === 'living') livingExpense += amount;
+                else if (r.account === 'rabbit') rabbitExpense += amount;
+            }
+        });
+
+        const netSavings = totalIncome - totalExpense;
+        const text = userInput.toLowerCase();
+
+        if (text.includes('audit') || text.includes('診斷本月收支') || text.includes('收支')) {
+            const pctLiving = totalExpense > 0 ? Math.round((livingExpense / totalExpense) * 100) : 0;
+            const pctRabbit = totalExpense > 0 ? Math.round((rabbitExpense / totalExpense) * 100) : 0;
+            let rating = "非常好！繼續保持喔！";
+            if (netSavings < 0) rating = "糟糕，本月超支了！起粑提醒你們，零食飲料開銷要省一點囉！💸";
+            
+            return `📊 **本月雙兔財務體檢報告** 📝\n\n主子起粑幫你們算好囉！這個月目前總共支出 **${formatCurrency(totalExpense)}**。\n- 🏠 **生活開銷**：${formatCurrency(livingExpense)} (佔比 ${pctLiving}%)\n- 🐾 **起粑開銷**：${formatCurrency(rabbitExpense)} (佔比 ${pctRabbit}%)\n- 💰 **結餘收支差**：${formatCurrency(netSavings)}\n\n💡 **財務評分/建議**：${rating}\n起粑發現這個月的生活飲料和娛樂開支可以稍微縮減一些，這樣我就有更多的草草可以吃囉！🐰🥗`;
+        }
+
+        if (text.includes('rabbit') || text.includes('起粑開銷合適度') || text.includes('起粑') || text.includes('兔子')) {
+            return `🌾 **起粑開銷合適度分析** 🐇\n\n本月用於起粑開銷的金額為 **${formatCurrency(rabbitExpense)}**。\n其中包含牧草、飼料、以及看醫生的健檢費用。\n\n💡 **起粑健康省錢秘訣**：\n1. 提摩西牧草買 **5KG 大包裝** 最便宜！算下來一公斤能省下好幾十元喔！\n2. 定期清理便便與梳毛，能大大降低肚肚脹氣毛球症的醫藥費喔！\n3. 零食適量就好，多吃牧草牙齒才健康，又能省下磨牙醫療費，是一舉兩得耶！🐾✨`;
+        }
+
+        if (text.includes('couple') || text.includes('情侶省錢挑戰') || text.includes('省錢')) {
+            return `💰 **情侶雙人一週 999 省錢大挑戰！** 🎯\n\n起粑為拔麻設計了一週極速省錢計畫，完成挑戰可以省下好多錢！\n\n1. 🍳 **自炊大作戰**：這週挑選 3 天晚上一起去買菜下廚，享受兩人溫馨晚餐，完全不點外送！\n2. 🥤 **自製飲品代替手搖杯**：兩個人手搖杯每天改為一人一杯大杯共享，或是泡清爽的麥茶！\n3. 🐾 **廢物利用兔子玩具**：不要買新玩具，用紙箱剪出迷宮給起粑玩，我最喜歡躲貓貓了！\n\n加油！起粑會在旁邊扭屁股幫你們加油打氣！🥰`;
+        }
+
+        return `收到拔麻的訊息囉！🐰✨\n起粑目前幫你們看了一下當前帳本狀態：本月目前共記錄了 **${currentMonthRecords.length} 筆** 消費，總支出 **${formatCurrency(totalExpense)}**。\n\n建議點選上方的「📊 診斷本月收支」按鈕，起粑會立刻提供你們專屬的理財大數據診斷喔！`;
+    }
+
     function renderAiChatHistory() {
         const container = document.getElementById('chat-messages-container');
         if (!container) return;
@@ -2087,6 +2186,21 @@ service cloud.firestore {
         container.appendChild(typingEl);
         container.scrollTop = container.scrollHeight;
 
+        const key = state.customGeminiKey;
+
+        // Fallback option if API key is not configured or offline
+        if (!key) {
+            setTimeout(() => {
+                const indicator = document.getElementById(typingId);
+                if (indicator) indicator.remove();
+
+                const responseText = generateLocalAiResponse(text);
+                state.chatHistory.push({ role: 'assistant', text: responseText });
+                renderAiChatHistory();
+            }, 1000);
+            return;
+        }
+
         try {
             const currentMonthRecords = state.records.filter(r => r.date && r.date.startsWith(state.selectedMonth));
             
@@ -2116,8 +2230,7 @@ service cloud.firestore {
             請使用繁體中文（台灣習慣用語，如『發票』、『電子支付』、『便當』、『提摩西草』等）。
             請適時加入一些可愛的表情符號 (e.g. 🐰, 🐾, 🥗, 💸) 增加趣味性！並適時給出情侶的理財省錢妙招。`;
 
-            const apiKey = ""; 
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${key}`;
 
             const payload = {
                 contents: [{
@@ -2158,7 +2271,9 @@ service cloud.firestore {
             const indicator = document.getElementById(typingId);
             if (indicator) indicator.remove();
 
-            state.chatHistory.push({ role: 'assistant', text: '抱歉，兔兔網路開小差了... 🕳️🐰 請再傳送一次您的問題，或是檢查網路連線喔！' });
+            // Dynamic offline fallback as safeguard
+            const responseText = generateLocalAiResponse(text);
+            state.chatHistory.push({ role: 'assistant', text: responseText + "\n\n*(💡 起粑提醒：因雲端連線失敗，目前由本地分析引擎提供溫馨回覆)*" });
             renderAiChatHistory();
         }
     };
@@ -2251,13 +2366,12 @@ service cloud.firestore {
 
     <!-- VIEW 1: HOME PAGE OVERVIEW -->
     <section id="view-home" class="app-view space-y-5">
-        <!-- Floating AI Notification Banner -->
-        <div onclick="switchView('ai-chat')" class="bg-gradient-to-r from-orange-500 via-amber-500 to-brand-rabbit p-3.5 rounded-2xl text-white shadow-md flex items-center justify-between cursor-pointer hover:brightness-105 transition-all animate-bounce">
+        <div onclick="switchView('ai-chat')" class="bg-gradient-to-r from-orange-500 via-amber-500 to-brand-rabbit p-3.5 rounded-2xl text-white shadow-md flex items-center justify-between cursor-pointer hover:brightness-105 transition-all">
             <div class="flex items-center gap-3">
-                <span class="text-2xl">🐰</span>
+                <span class="text-2xl animate-bounce">🐰</span>
                 <div>
-                    <h4 class="text-xs font-bold">新上線！「起粑 AI 記帳分析助理」</h4>
-                    <p class="text-[10px] opacity-90 mt-0.5">點此詢問助理：自動診斷本月花費比例 & 提供起粑照護省錢妙招！</p>
+                    <h4 class="text-xs font-bold">「起粑 AI 記帳分析助理」上線囉！</h4>
+                    <p class="text-[10px] opacity-90 mt-0.5">點此詢問：自動診斷本月花費比例 & 提供起粑照護省錢妙招！🐾</p>
                 </div>
             </div>
             <i class="fa-solid fa-circle-chevron-right text-lg shrink-0"></i>
@@ -2601,7 +2715,7 @@ service cloud.firestore {
                 <span class="text-3xl shrink-0">🐰</span>
                 <div>
                     <h3 class="font-extrabold text-slate-800 text-sm">起粑 AI 智能理財分析師</h3>
-                    <p class="text-[10px] text-slate-400">即時根據您本月的收支紀錄與起粑花費提供省錢秘笈 💫</p>
+                    <p class="text-[10px] text-slate-400">即時根據您本月的收支紀錄與起粑花費提供省錢秘笈 💡</p>
                 </div>
             </div>
 
@@ -2625,7 +2739,7 @@ service cloud.firestore {
 
             <!-- Message Input Form -->
             <div class="flex gap-2 border-t border-slate-100 pt-3 flex-shrink-0">
-                <input type="text" id="chat-input-text" placeholder="問問兔兔：『我們這個月飲料喝太多了嗎？』" onkeypress="if(event.key === 'Enter') sendAiChatMessage()" class="flex-grow bg-slate-50 border border-slate-100 rounded-xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                <input type="text" id="chat-input-text" placeholder="問問起粑助理：『我們這個月手搖杯喝太多了嗎？』" onkeypress="if(event.key === 'Enter') sendAiChatMessage()" class="flex-grow bg-slate-50 border border-slate-100 rounded-xl px-3.5 py-2.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
                 <button onclick="sendAiChatMessage()" class="bg-gradient-to-tr from-brand-living to-sky-600 hover:brightness-105 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0">
                     傳送
                 </button>
@@ -2664,7 +2778,31 @@ service cloud.firestore {
 
     <!-- VIEW 6: SETTINGS, COLLABORATION, BACKUPS -->
     <section id="view-settings" class="app-view space-y-5 hidden max-w-xl mx-auto">
-        <!-- New Database Connectivity Custom Card for EZPage and Github -->
+        <!-- New Gemini Key Option Card -->
+        <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
+            <h3 class="text-sm font-extrabold text-slate-800 flex items-center gap-1.5">
+                <i class="fa-solid fa-wand-magic-sparkles text-indigo-500"></i> Google Gemini AI API 金鑰設定
+            </h3>
+            <p class="text-xs text-slate-500 leading-relaxed">
+                填寫您的 **Gemini API 金鑰** 以啟用強大的 **🪄 發票自動辨識** 與真實的 **💬 智慧財務對話** 功能！若無金鑰，系統將切換為起粑本地智慧分析，提供溫馨有趣的本月財務諮詢。
+            </p>
+            <div class="space-y-3.5">
+                <div>
+                    <label class="block text-[11px] font-black text-slate-400 mb-1">Gemini API Key</label>
+                    <input type="password" id="gemini-key-input" placeholder="AIzaSy..." class="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-xs font-mono focus:ring-1 focus:ring-brand-living outline-none">
+                    <p class="text-[9px] text-slate-400 mt-1">💡 您可以前往 Google AI Studio 免費申請個人專屬的 Gemini API Key。</p>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="saveCustomGeminiKey()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl text-xs font-black transition-colors">
+                        套用並啟用 AI
+                    </button>
+                    <button onclick="clearCustomGeminiKey()" class="bg-slate-100 hover:bg-slate-200 text-slate-600 px-4 py-2 rounded-xl text-xs font-bold transition-colors">
+                        清除金鑰
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div class="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
             <h3 class="text-sm font-extrabold text-slate-800 flex items-center gap-1.5">
                 <i class="fa-solid fa-network-wired text-brand-living"></i> GitHub / EZPage 雲端資料庫設定
@@ -2760,60 +2898,94 @@ service cloud.firestore {
 </main>
 
 <nav class="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 grid grid-cols-5 items-center pt-2.5 z-40 shadow-lg rounded-t-2xl" style="padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 12px));">
-    <a href="#" onclick="switchView('home')" data-view="home" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+    <a href="#" onclick="switchView('home')" data-view="home" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer col-span-1">
         <i class="fa-solid fa-chart-pie text-lg text-brand-living font-bold"></i>
         <span class="text-[11px] text-brand-living font-bold mt-0.5">首頁</span>
     </a>
-    <a href="#" onclick="switchView('records')" data-view="records" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+    <a href="#" onclick="switchView('records')" data-view="records" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer col-span-1">
         <i class="fa-solid fa-list-ul text-lg"></i>
         <span class="text-[11px] mt-0.5">明細</span>
     </a>
     
     <!-- Floating Quick Add Button (Centered mathematically in grid column 3) -->
-    <div class="relative h-10 flex items-center justify-center">
+    <div class="relative h-10 flex items-center justify-center col-span-1">
         <button onclick="resetRecordForm(); switchView('add');" class="absolute -top-7 left-1/2 -translate-x-1/2 w-14 h-14 rounded-full bg-gradient-to-tr from-brand-living via-sky-500 to-brand-rabbit text-white flex items-center justify-center text-2xl shadow-xl border-4 border-white select-none hover:brightness-110 active:scale-95 transition-all z-50">
             <i class="fa-solid fa-plus"></i>
         </button>
     </div>
 
-    <a href="#" onclick="switchView('ai-chat')" data-view="ai-chat" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+    <a href="#" onclick="switchView('ai-chat')" data-view="ai-chat" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer col-span-1">
         <i class="fa-solid fa-wand-magic-sparkles text-lg"></i>
         <span class="text-[11px] mt-0.5">AI 助理</span>
     </a>
-    <a href="#" onclick="switchView('settings')" data-view="settings" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer">
+    <a href="#" onclick="switchView('settings')" data-view="settings" class="nav-tab flex flex-col items-center text-slate-400 select-none cursor-pointer col-span-1">
         <i class="fa-solid fa-gear text-lg"></i>
-        <span class="text-[11px] mt-0.5">成員設定</span>
+        <span class="text-[11px] mt-0.5">設定</span>
     </a>
 </nav>
 
-<!-- Context Popup sheet action popup -->
+<!-- NEW: Rich Transaction Inspector Expandable Panel -->
 <div id="action-menu-modal" class="fixed inset-0 bg-black/60 z-50 flex items-end justify-center hidden" onclick="closeRecordActionMenu()">
-    <div class="bg-white w-full max-w-md rounded-t-3xl p-5 space-y-4 shadow-xl translate-y-0 transition-transform duration-300" onclick="event.stopPropagation()">
-        <div class="flex items-center justify-between border-b border-slate-50 pb-2">
-            <h3 id="action-menu-title" class="font-extrabold text-slate-800 text-sm">管理收支明細</h3>
-            <button onclick="closeRecordActionMenu()" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-sm"></i></button>
+    <div class="bg-white w-full max-w-md rounded-t-3xl p-5 space-y-4 shadow-xl translate-y-0 transition-transform duration-300 overflow-y-auto max-h-[90vh]" onclick="event.stopPropagation()">
+        
+        <!-- Header details -->
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div class="flex items-center gap-3">
+                <div id="ins-icon-wrapper" class="w-11 h-11 rounded-full flex items-center justify-center text-white text-lg">
+                    <i id="ins-icon" class="fa-solid fa-tag"></i>
+                </div>
+                <div>
+                    <h3 id="ins-title" class="font-extrabold text-slate-800 text-sm">起粑提摩西草</h3>
+                    <p class="text-[10px] text-slate-400">收支項目查閱詳情</p>
+                </div>
+            </div>
+            <button onclick="closeRecordActionMenu()" class="text-slate-400 hover:text-slate-600 p-1.5"><i class="fa-solid fa-xmark text-lg"></i></button>
         </div>
 
-        <div class="grid grid-cols-3 gap-2.5 pb-2">
-            <button onclick="handleEditAction()" class="flex flex-col items-center gap-1.5 p-3 rounded-xl hover:bg-slate-50 text-slate-700 cursor-pointer transition-colors">
-                <div class="w-10 h-10 rounded-full bg-sky-50 text-sky-600 flex items-center justify-center">
+        <!-- Large Price representation -->
+        <div class="text-center py-2">
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">交易金額</p>
+            <h2 id="ins-amount" class="text-2xl font-black text-slate-800 mt-0.5">-NT$0</h2>
+        </div>
+
+        <!-- Details Grid Card -->
+        <div class="bg-slate-50 rounded-2xl p-4 space-y-2.5 text-xs text-slate-600 border border-slate-100">
+            <div class="flex justify-between"><span class="font-bold text-slate-400">📅 消費日期</span><span id="ins-val-date" class="font-semibold text-slate-800"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400">💼 所屬帳本</span><span id="ins-val-account" class="font-semibold text-slate-800"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400">↕️ 交易類型</span><span id="ins-val-type" class="font-semibold text-slate-800"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400">👤 付款/交易人</span><span id="ins-val-payer" class="font-semibold text-slate-800"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400">💳 付款方式</span><span id="ins-val-method" class="font-semibold text-slate-800"></span></div>
+            <div class="flex justify-between"><span class="font-bold text-slate-400">📝 登入/修改人</span><span id="ins-val-creator" class="font-semibold text-slate-800"></span></div>
+            <div class="flex flex-col pt-1.5 border-t border-slate-200/60"><span class="font-bold text-slate-400 mb-1">💬 備註說明</span><p id="ins-val-notes" class="text-slate-700 bg-white p-2.5 rounded-lg border border-slate-200/50 leading-relaxed font-medium break-all"></p></div>
+        </div>
+
+        <!-- Image Attachment Section -->
+        <div id="ins-attachments-section" class="space-y-2 hidden">
+            <h4 class="text-xs font-bold text-slate-400 flex items-center gap-1"><i class="fa-solid fa-paperclip"></i> 收據與照片憑證</h4>
+            <div id="ins-attachments-container" class="flex gap-2 overflow-x-auto hide-scrollbar py-1"></div>
+        </div>
+
+        <!-- Management Action buttons -->
+        <div class="grid grid-cols-3 gap-2.5 pt-2 border-t border-slate-100">
+            <button onclick="handleEditAction()" class="flex flex-col items-center gap-1.5 p-2 rounded-xl hover:bg-slate-50 text-slate-700 cursor-pointer transition-colors">
+                <div class="w-9 h-9 rounded-full bg-sky-50 text-sky-600 flex items-center justify-center text-sm">
                     <i class="fa-solid fa-pen-to-square"></i>
                 </div>
-                <span class="text-xs font-bold">編輯此筆</span>
+                <span class="text-[10px] font-bold">編輯此筆</span>
             </button>
             
-            <button onclick="handleCopyAction()" class="flex flex-col items-center gap-1.5 p-3 rounded-xl hover:bg-slate-50 text-slate-700 cursor-pointer transition-colors">
-                <div class="w-10 h-10 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center">
+            <button onclick="handleCopyAction()" class="flex flex-col items-center gap-1.5 p-2 rounded-xl hover:bg-slate-50 text-slate-700 cursor-pointer transition-colors">
+                <div class="w-9 h-9 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center text-sm">
                     <i class="fa-solid fa-copy"></i>
                 </div>
-                <span class="text-xs font-bold">複製新增</span>
+                <span class="text-[10px] font-bold">複製新增</span>
             </button>
 
-            <button onclick="handleDeleteAction()" class="flex flex-col items-center gap-1.5 p-3 rounded-xl hover:bg-rose-50 text-rose-600 cursor-pointer transition-colors">
-                <div class="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
+            <button onclick="handleDeleteAction()" class="flex flex-col items-center gap-1.5 p-2 rounded-xl hover:bg-rose-50 text-rose-600 cursor-pointer transition-colors">
+                <div class="w-9 h-9 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center text-sm">
                     <i class="fa-solid fa-trash-can"></i>
                 </div>
-                <span class="text-xs font-bold text-rose-600">刪除明細</span>
+                <span class="text-[10px] font-bold text-rose-600">刪除明細</span>
             </button>
         </div>
     </div>
