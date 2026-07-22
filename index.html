@@ -1567,15 +1567,15 @@ service cloud.firestore {
     };
 
     function renderRecordsView() {
-        const filterAccount = document.getElementById('filter-account').value;
-        const filterCategory = document.getElementById('filter-category').value;
-        const filterPayer = document.getElementById('filter-payer').value;
-        const filterSettled = document.getElementById('filter-settled').value;
-        const searchKeyword = document.getElementById('filter-keyword').value.trim().toLowerCase();
-        const minAmt = parseFloat(document.getElementById('filter-min-amount').value);
-        const maxAmt = parseFloat(document.getElementById('filter-max-amount').value);
-        const dateFrom = document.getElementById('filter-date-from').value;
-        const dateTo = document.getElementById('filter-date-to').value;
+        const filterAccount = document.getElementById('filter-account')?.value || 'all';
+        const filterCategory = document.getElementById('filter-category')?.value || 'all';
+        const filterPayer = document.getElementById('filter-payer')?.value || 'all';
+        const filterSettled = document.getElementById('filter-settled')?.value || 'all';
+        const searchKeyword = (document.getElementById('filter-keyword')?.value || '').trim().toLowerCase();
+        const minAmt = parseFloat(document.getElementById('filter-min-amount')?.value);
+        const maxAmt = parseFloat(document.getElementById('filter-max-amount')?.value);
+        const dateFrom = document.getElementById('filter-date-from')?.value;
+        const dateTo = document.getElementById('filter-date-to')?.value;
 
         const filterType = state.recordTabFilter;
 
@@ -1669,40 +1669,25 @@ service cloud.firestore {
         }).join('');
     }
 
-    window.setRecordTypeFilter = function(type) {
-        state.recordTabFilter = type;
-        
-        const tabs = {
-            all: document.getElementById('tab-filter-all'),
-            expense: document.getElementById('tab-filter-expense'),
-            income: document.getElementById('tab-filter-income')
+    window.resetSearchFilters = function() {
+        const safeSet = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
         };
+        safeSet('filter-account', 'all');
+        safeSet('filter-type', 'all');
+        safeSet('filter-category', 'all');
+        safeSet('filter-payer', 'all');
+        safeSet('filter-settled', 'all');
+        safeSet('filter-keyword', '');
+        safeSet('filter-min-amount', '');
+        safeSet('filter-max-amount', '');
+        safeSet('filter-date-from', '');
+        safeSet('filter-date-to', '');
         
-        Object.keys(tabs).forEach(k => {
-            const tab = tabs[k];
-            if (!tab) return;
-            if (k === type) {
-                tab.className = "flex-1 py-2 text-xs font-bold rounded-lg transition-all text-center cursor-pointer bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm";
-            } else {
-                tab.className = "flex-1 py-2 text-xs font-bold rounded-lg transition-all text-center cursor-pointer text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200";
-            }
-        });
-
-        const selectType = document.getElementById('filter-type');
-        if (selectType) selectType.value = type;
-
-        renderRecordsView();
+        setRecordTypeFilter('all');
+        showToast('已重設所有篩選器', 'info');
     };
-
-    function bindCategoryFilters() {
-        const catSelect = document.getElementById('filter-category');
-        const prevVal = catSelect.value;
-        const currentCategoryNames = [...new Set(state.categories.map(c => c.name))];
-        
-        catSelect.innerHTML = '<option value="all">所有消費分類</option>' + 
-            currentCategoryNames.map(name => `<option value="${name}">${name}</option>`).join('');
-        catSelect.value = prevVal;
-    }
 
     window.triggerSearchFilter = function() {
         const advancedVal = document.getElementById('filter-type').value;
@@ -2916,6 +2901,14 @@ service cloud.firestore {
                 <div>
                     <label class="block text-[10px] font-bold text-slate-400 dark:text-zinc-500 mb-1">金額上限</label>
                     <input type="number" id="filter-max-amount" placeholder="無上限" oninput="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 dark:text-zinc-500 mb-1">日期起點</label>
+                    <input type="date" id="filter-date-from" onchange="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-400 dark:text-zinc-500 mb-1">日期終點</label>
+                    <input type="date" id="filter-date-to" onchange="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
                 </div>
             </div>
 
