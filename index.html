@@ -10,8 +10,10 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="雙兔記帳">
     
-    <!-- iOS 桌面 App 專屬可愛兔兔圖示 (Data URI SVG) -->
-    <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='120' fill='%230ea5e9'/><text x='50%' y='54%' dominant-baseline='central' text-anchor='middle' font-size='320'>🐰</text></svg>">
+    <!-- iOS 桌面 App 專屬高畫質兔兔 PNG 圖示 (徹底解決 iOS 不支援 SVG 導致變成「雙」字的問題) -->
+    <link rel="apple-touch-icon" sizes="180x180" href="https://img.icons8.com/emoji/180/rabbit-face-emoji.png">
+    <link rel="apple-touch-icon-precomposed" href="https://img.icons8.com/emoji/180/rabbit-face-emoji.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="https://img.icons8.com/emoji/180/rabbit-face-emoji.png">
 
     <!-- Tailwind CSS with custom configuration -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -76,14 +78,12 @@
             -ms-overflow-style: none;
             scrollbar-width: none;
         }
-        /* Smooth light-dark mode transitions */
         body {
             transition: background-color 0.3s ease, color 0.3s ease;
         }
     </style>
     
     <script>
-        // Set theme immediately to avoid flash of light mode
         const savedTheme = localStorage.getItem('ledger_theme') || 'light';
         if (savedTheme === 'dark') {
             document.documentElement.classList.add('dark');
@@ -99,7 +99,6 @@
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    // Handling customized configuration
     const storedConfig = localStorage.getItem('custom_firebase_config');
     const firebaseConfig = storedConfig ? JSON.parse(storedConfig) : (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
         apiKey: "",
@@ -116,7 +115,6 @@
     let app, db, auth;
     let isFirebaseReady = false;
 
-    // Local Storage Fallbacks
     let localRecords = JSON.parse(localStorage.getItem('ledger_records') || '[]');
     let localCategories = JSON.parse(localStorage.getItem('ledger_categories') || '[]');
     let localTemplates = JSON.parse(localStorage.getItem('ledger_templates') || '[]');
@@ -242,6 +240,17 @@
         { id: 't4', title: '起粑提摩西一號牧草', account: 'rabbit', type: 'expense', amount: 350, category: '起粑牧草', payer: '共同分攤', payMethod: '信用卡', channel: '蝦皮購物' }
     ];
 
+    function deduplicateCategories(cats) {
+        if (!Array.isArray(cats)) return [];
+        const seen = new Set();
+        return cats.filter(c => {
+            const key = `${c.account}_${c.type}_${c.name}`.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }
+
     function loadLocalData() {
         if (!localStorage.getItem('ledger_categories')) {
             localStorage.setItem('ledger_categories', JSON.stringify(defaultCategories));
@@ -263,6 +272,8 @@
                     stateUpdated = true;
                 }
             });
+
+            state.categories = deduplicateCategories(state.categories);
 
             if (stateUpdated) {
                 localStorage.setItem('ledger_categories', JSON.stringify(state.categories));
@@ -418,7 +429,7 @@ service cloud.firestore {
             if (filtered.length === 0) {
                 initializeCloudDefaults();
             } else {
-                state.categories = filtered;
+                state.categories = deduplicateCategories(filtered);
                 
                 // Keep cloud categories self-healing for required defaults
                 const requiredCats = [
@@ -845,12 +856,10 @@ service cloud.firestore {
         const hasAttachment = r.images && r.images.length > 0;
         const clipIcon = hasAttachment ? `<i class="fa-solid fa-paperclip text-slate-400 text-xs ml-1 hover:text-brand-living"></i>` : '';
         
-        // Dynamic Channel badge for Rabbit Expenses
         const channelStr = (r.account === 'rabbit' && r.type === 'expense' && r.channel) 
             ? `<span class="text-amber-600 dark:text-amber-400 font-semibold text-[10px] flex items-center gap-0.5 whitespace-nowrap ml-1.5"><i class="fa-solid fa-store text-[9px]"></i> ${r.channel}</span>` 
             : '';
 
-        // Settlement Status Badge
         const isSettled = r.isSettled === true;
         const settlementBadge = isSettled
             ? `<span class="px-1.5 py-0.5 rounded-md font-semibold text-[10px] whitespace-nowrap bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><i class="fa-solid fa-check text-[9px]"></i> 已結清</span>`
@@ -868,9 +877,9 @@ service cloud.firestore {
                             <span class="font-bold text-sm text-slate-800 dark:text-zinc-200 truncate">${r.title || r.category}</span>
                             ${clipIcon}
                         </div>
-                        <!-- Subtitle Metadata Stack -->
+                        <!-- Subtitle Metadata Stack: Uniform Layout & Spacing -->
                         <div class="mt-1 flex flex-col gap-1 text-[11px]">
-                            <!-- Row 2: Date & Store Channel -->
+                            <!-- Row 2: Date & Optional Store Channel -->
                             <div class="flex items-center text-slate-400 dark:text-zinc-500 gap-1.5">
                                 <i class="fa-regular fa-calendar-days text-[10px]"></i>
                                 <span class="font-medium whitespace-nowrap">${formatDate(r.date)}</span>
@@ -963,14 +972,12 @@ service cloud.firestore {
         const iconClass = cat ? cat.icon : 'fa-tag';
         const colorClass = cat ? cat.color : '#64748b';
 
-        // Set Header details
         document.getElementById('ins-icon').className = `fa-solid ${iconClass}`;
         document.getElementById('ins-icon-wrapper').style.backgroundColor = colorClass;
         document.getElementById('ins-title').innerText = r.title || r.category;
         document.getElementById('ins-amount').innerText = `${sign}${formatCurrency(r.amount)}`;
         document.getElementById('ins-amount').className = `text-2xl font-black ${amtColor}`;
 
-        // Set Table details
         document.getElementById('ins-val-date').innerText = r.date || '無日期';
         document.getElementById('ins-val-account').innerText = isRabbit ? '起粑開銷 🐾' : '生活開銷 🏠';
         document.getElementById('ins-val-type').innerText = isIncome ? '收入 (+)' : '支出 (-)';
@@ -979,7 +986,6 @@ service cloud.firestore {
         document.getElementById('ins-val-notes').innerText = r.note || '（未輸入備註）';
         document.getElementById('ins-val-creator').innerText = `${r.createdBy || '未知'} (修改: ${r.updatedBy || '無'})`;
 
-        // Settlement Status text & quick button
         const isSettled = r.isSettled === true;
         const statusEl = document.getElementById('ins-val-settled');
         const toggleBtnText = document.getElementById('ins-toggle-settled-btn-text');
@@ -992,7 +998,6 @@ service cloud.firestore {
             if (toggleBtnText) toggleBtnText.innerText = "一鍵結清代墊 ✅";
         }
 
-        // Render channel section dynamically
         const insValChannelRow = document.getElementById('ins-row-channel');
         if (isRabbit && !isIncome && r.channel) {
             insValChannelRow.classList.remove('hidden');
@@ -1001,7 +1006,6 @@ service cloud.firestore {
             insValChannelRow.classList.add('hidden');
         }
 
-        // Render attachments
         const attContainer = document.getElementById('ins-attachments-container');
         if (r.images && r.images.length > 0) {
             document.getElementById('ins-attachments-section').classList.remove('hidden');
@@ -1056,7 +1060,7 @@ service cloud.firestore {
             }
 
             showToast(newSettledState ? '🎉 已標示為「已結清」！' : '⏳ 已重置為「未結清」', 'success');
-            openRecordActionMenu(id); // Refresh inspector values
+            openRecordActionMenu(id);
         } catch (e) {
             console.error("Settlement toggle failed:", e);
             showToast('更新結清狀態失敗', 'danger');
@@ -1229,9 +1233,9 @@ service cloud.firestore {
         const channelWrapper = document.getElementById('channel-field-wrapper');
 
         const filteredCats = state.categories.filter(c => c.account === account && c.type === type);
-        catSelect.innerHTML = filteredCats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+        const uniqueCatNames = [...new Set(filteredCats.map(c => c.name))];
+        catSelect.innerHTML = uniqueCatNames.map(name => `<option value="${name}">${name}</option>`).join('');
         
-        // Show/Hide Channel input based on 起粑支出 rule
         if (account === 'rabbit' && type === 'expense') {
             channelWrapper.classList.remove('hidden');
         } else {
@@ -1626,7 +1630,6 @@ service cloud.firestore {
             }
         });
 
-        // Sync back with advanced panel type selector
         const selectType = document.getElementById('filter-type');
         if (selectType) selectType.value = type;
 
@@ -2201,7 +2204,8 @@ service cloud.firestore {
         const channelWrapper = document.getElementById('temp-channel-wrapper');
 
         const filtered = state.categories.filter(c => c.account === account && c.type === 'expense');
-        catSelect.innerHTML = filtered.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+        const uniqueCatNames = [...new Set(filtered.map(c => c.name))];
+        catSelect.innerHTML = uniqueCatNames.map(name => `<option value="${name}">${name}</option>`).join('');
         
         if (account === 'rabbit') {
             channelWrapper.classList.remove('hidden');
@@ -2483,7 +2487,6 @@ service cloud.firestore {
 
         const key = state.customGeminiKey;
 
-        // Fallback option if API key is not configured or offline
         if (!key) {
             setTimeout(() => {
                 const indicator = document.getElementById(typingId);
@@ -2673,7 +2676,7 @@ service cloud.firestore {
             </button>
         </nav>
 
-        <!-- Header AI Button (Moved to top right next to theme toggle) -->
+        <!-- Header AI Button (Top right next to theme toggle) -->
         <button onclick="switchView('ai-chat')" class="px-2.5 py-1.5 rounded-xl bg-orange-50 dark:bg-orange-950/30 hover:bg-orange-100 dark:hover:bg-orange-900/40 text-orange-600 dark:text-orange-400 border border-orange-200/60 dark:border-orange-800/40 text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer">
             <i class="fa-solid fa-wand-magic-sparkles text-xs animate-pulse"></i>
             <span>起粑 AI</span>
@@ -3074,7 +3077,6 @@ service cloud.firestore {
 
             <!-- Messages Window -->
             <div id="chat-messages-container" class="flex-grow overflow-y-auto py-4 space-y-4 flex flex-col hide-scrollbar w-full">
-                <!-- Chat messages stream via JS -->
             </div>
 
             <!-- Message Input Form -->
@@ -3431,7 +3433,6 @@ service cloud.firestore {
                 </select>
             </div>
             
-            <!-- Dynamic channel inside Template creator -->
             <div id="temp-channel-wrapper" class="hidden">
                 <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
                     🛒 預設購買通路/商店
@@ -3514,6 +3515,7 @@ service cloud.firestore {
     <span class="text-white text-xs font-bold tracking-wider">正在處理雲端同步中...</span>
 </div>
 
+<!-- Cloud error diagnostic modal -->
 <div id="cloud-error-modal" class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 hidden">
     <div class="bg-white dark:bg-zinc-900 w-full max-w-md rounded-3xl p-6 space-y-4 shadow-2xl overflow-y-auto max-h-[90vh]" onclick="event.stopPropagation()">
         <div class="text-center space-y-2">
