@@ -194,14 +194,11 @@
             canvas.height = 180;
             const ctx = canvas.getContext('2d');
 
-            // Vibrant Orange Background
             ctx.fillStyle = '#f97316';
             ctx.fillRect(0, 0, 180, 180);
 
-            // Clean White Rabbit Silhouette
             ctx.fillStyle = '#ffffff';
 
-            // Left Ear
             ctx.save();
             ctx.translate(65, 55);
             ctx.rotate(-0.14);
@@ -210,7 +207,6 @@
             ctx.fill();
             ctx.restore();
 
-            // Right Ear
             ctx.save();
             ctx.translate(115, 55);
             ctx.rotate(0.14);
@@ -219,12 +215,10 @@
             ctx.fill();
             ctx.restore();
 
-            // Head Center
             ctx.beginPath();
             ctx.arc(90, 114, 40, 0, Math.PI * 2);
             ctx.fill();
 
-            // Cheeks
             ctx.beginPath();
             ctx.arc(73, 122, 22, 0, Math.PI * 2);
             ctx.arc(107, 122, 22, 0, Math.PI * 2);
@@ -316,7 +310,6 @@
         } else {
             state.categories = JSON.parse(localStorage.getItem('ledger_categories'));
             
-            // Auto-heal missing categories
             const requiredCats = [
                 { id: 'c0_1', account: 'living', type: 'expense', name: '活力早餐', icon: 'fa-bread-slice', color: '#f59e0b' },
                 { id: 'c0_2', account: 'living', type: 'expense', name: '美味午餐', icon: 'fa-bowl-rice', color: '#eab308' },
@@ -489,7 +482,6 @@ service cloud.firestore {
             } else {
                 state.categories = deduplicateCategories(filtered);
                 
-                // Keep cloud categories self-healing for required defaults
                 const requiredCats = [
                     { account: 'living', type: 'expense', name: '活力早餐', icon: 'fa-bread-slice', color: '#f59e0b' },
                     { account: 'living', type: 'expense', name: '美味午餐', icon: 'fa-bowl-rice', color: '#eab308' },
@@ -576,7 +568,6 @@ service cloud.firestore {
             });
         });
 
-        // Dynamic binding: Populate filter and template payer options with Way and Momo
         updateDynamicPayerDropdowns();
 
         loadLocalData();
@@ -584,7 +575,6 @@ service cloud.firestore {
     }
 
     function updateDynamicPayerDropdowns() {
-        // Update Advanced Filter Payer Dropdown
         const filterPayerSelect = document.getElementById('filter-payer');
         if (filterPayerSelect) {
             filterPayerSelect.innerHTML = `
@@ -595,7 +585,6 @@ service cloud.firestore {
             `;
         }
 
-        // Update Add Template Payer Dropdown
         const tempPayerSelect = document.getElementById('temp-modal-payer');
         if (tempPayerSelect) {
             tempPayerSelect.innerHTML = `
@@ -652,21 +641,7 @@ service cloud.firestore {
             }
         });
 
-        if (viewName === 'home') {
-            renderHomeView();
-        } else if (viewName === 'records') {
-            renderRecordsView();
-        } else if (viewName === 'stats') {
-            renderStatsView();
-        } else if (viewName === 'categories') {
-            renderCategoriesView();
-        } else if (viewName === 'settings') {
-            renderSettingsView();
-        } else if (viewName === 'add') {
-            setupRecordForm();
-        } else if (viewName === 'ai-chat') {
-            renderAiChatHistory();
-        }
+        renderApp();
 
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -1263,11 +1238,13 @@ service cloud.firestore {
         renderFormImagePreviews([]);
         
         const payerSelect = document.getElementById('rec-payer');
-        payerSelect.innerHTML = `
-            <option value="共同分攤">共同分攤</option>
-            <option value="${state.currentUser}">${state.currentUser}</option>
-            <option value="${state.partnerUser}">${state.partnerUser}</option>
-        `;
+        if (payerSelect) {
+            payerSelect.innerHTML = `
+                <option value="共同分攤">共同分攤</option>
+                <option value="${state.currentUser}">${state.currentUser}</option>
+                <option value="${state.partnerUser}">${state.partnerUser}</option>
+            `;
+        }
     }
 
     function resetRecordForm() {
@@ -1566,7 +1543,25 @@ service cloud.firestore {
         }
     };
 
+    function bindCategoryFilters() {
+        const catSelect = document.getElementById('filter-category');
+        if (!catSelect) return;
+        const currentVal = catSelect.value || 'all';
+        const uniqueCatNames = [...new Set(state.categories.map(c => c.name))];
+        catSelect.innerHTML = `<option value="all">所有消費分類</option>` + 
+            uniqueCatNames.map(name => `<option value="${name}">${name}</option>`).join('');
+        
+        if (uniqueCatNames.includes(currentVal)) {
+            catSelect.value = currentVal;
+        } else {
+            catSelect.value = 'all';
+        }
+    }
+    window.bindCategoryFilters = bindCategoryFilters;
+
     function renderRecordsView() {
+        bindCategoryFilters();
+
         const filterAccount = document.getElementById('filter-account')?.value || 'all';
         const filterCategory = document.getElementById('filter-category')?.value || 'all';
         const filterPayer = document.getElementById('filter-payer')?.value || 'all';
@@ -1578,8 +1573,6 @@ service cloud.firestore {
         const dateTo = document.getElementById('filter-date-to')?.value;
 
         const filterType = state.recordTabFilter;
-
-        bindCategoryFilters();
 
         let filtered = state.records;
 
@@ -1636,10 +1629,11 @@ service cloud.firestore {
 
         const groups = {};
         filtered.forEach(r => {
-            if (!groups[r.date]) {
-                groups[r.date] = [];
+            const rDate = r.date || new Date().toISOString().substring(0, 10);
+            if (!groups[rDate]) {
+                groups[rDate] = [];
             }
-            groups[r.date].push(r);
+            groups[rDate].push(r);
         });
 
         const sortedDates = Object.keys(groups).sort((a, b) => new Date(b) - new Date(a));
@@ -1669,6 +1663,28 @@ service cloud.firestore {
         }).join('');
     }
 
+    window.setRecordTypeFilter = function(type) {
+        state.recordTabFilter = type;
+        const tabs = {
+            all: document.getElementById('tab-filter-all'),
+            expense: document.getElementById('tab-filter-expense'),
+            income: document.getElementById('tab-filter-income')
+        };
+        const activeClass = "flex-1 py-2 text-xs font-black rounded-xl transition-all text-center cursor-pointer bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm";
+        const inactiveClass = "flex-1 py-2 text-xs font-black rounded-xl transition-all text-center cursor-pointer text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200";
+
+        Object.keys(tabs).forEach(k => {
+            if (tabs[k]) {
+                tabs[k].className = (k === type) ? activeClass : inactiveClass;
+            }
+        });
+
+        const filterTypeSelect = document.getElementById('filter-type');
+        if (filterTypeSelect) filterTypeSelect.value = type;
+
+        renderRecordsView();
+    };
+
     window.resetSearchFilters = function() {
         const safeSet = (id, val) => {
             const el = document.getElementById(id);
@@ -1690,49 +1706,18 @@ service cloud.firestore {
     };
 
     window.triggerSearchFilter = function() {
-        const advancedVal = document.getElementById('filter-type').value;
-        if (state.recordTabFilter !== advancedVal) {
-            state.recordTabFilter = advancedVal;
-            const tabs = {
-                all: document.getElementById('tab-filter-all'),
-                expense: document.getElementById('tab-filter-expense'),
-                income: document.getElementById('tab-filter-income')
-            };
-            Object.keys(tabs).forEach(k => {
-                const tab = tabs[k];
-                if (!tab) return;
-                if (k === advancedVal) {
-                    tab.className = "flex-1 py-2 text-xs font-bold rounded-lg transition-all text-center cursor-pointer bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm";
-                } else {
-                    tab.className = "flex-1 py-2 text-xs font-bold rounded-lg transition-all text-center cursor-pointer text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200";
-                }
-            });
+        const filterTypeSelect = document.getElementById('filter-type');
+        if (filterTypeSelect && state.recordTabFilter !== filterTypeSelect.value) {
+            setRecordTypeFilter(filterTypeSelect.value);
+        } else {
+            renderRecordsView();
         }
-        renderRecordsView();
-    };
-
-    window.resetSearchFilters = function() {
-        document.getElementById('filter-account').value = 'all';
-        document.getElementById('filter-type').value = 'all';
-        document.getElementById('filter-category').value = 'all';
-        document.getElementById('filter-payer').value = 'all';
-        document.getElementById('filter-settled').value = 'all';
-        document.getElementById('filter-keyword').value = '';
-        document.getElementById('filter-min-amount').value = '';
-        document.getElementById('filter-max-amount').value = '';
-        document.getElementById('filter-date-from').value = '';
-        document.getElementById('filter-date-to').value = '';
-        
-        setRecordTypeFilter('all');
-        showToast('已重設所有篩選器', 'info');
     };
 
     window.toggleFilterPanel = function() {
         const panel = document.getElementById('advanced-filter-panel');
-        if (panel.classList.contains('hidden')) {
-            panel.classList.remove('hidden');
-        } else {
-            panel.classList.add('hidden');
+        if (panel) {
+            panel.classList.toggle('hidden');
         }
     };
 
@@ -2825,7 +2810,6 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW 2: RECORDS LIST AND ADVANCED SEARCH -->
     <section id="view-records" class="app-view space-y-4 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800 dark:text-zinc-100">歷史收支明細</h2>
@@ -2852,6 +2836,7 @@ service cloud.firestore {
             </button>
         </div>
 
+        <!-- Multi-dimensional Filter Panel -->
         <div id="advanced-filter-panel" class="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-4 hidden transition-all">
             <h3 class="text-xs font-black text-slate-400 dark:text-zinc-500 uppercase tracking-wider mb-2">多維度篩選器</h3>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -2926,7 +2911,6 @@ service cloud.firestore {
         <div id="records-list-container" class="space-y-4"></div>
     </section>
 
-    <!-- VIEW 3: ADD RECORD FORM -->
     <section id="view-add" class="app-view hidden max-w-xl mx-auto">
         <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-5 transition-colors">
             <div class="flex items-center justify-between">
@@ -3045,7 +3029,6 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW 4: STATS CHARTS -->
     <section id="view-stats" class="app-view space-y-5 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800 dark:text-zinc-100">每月消費數據統計</h2>
@@ -3105,7 +3088,6 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW 5: AI CHAT ASSISTANT -->
     <section id="view-ai-chat" class="app-view space-y-4 hidden max-w-2xl mx-auto">
         <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm flex flex-col h-[70vh] justify-between transition-colors">
             
@@ -3146,7 +3128,6 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW 6: CATEGORIES MANAGEMENT -->
     <section id="view-categories" class="app-view space-y-4 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800 dark:text-zinc-100">消費類別管理</h2>
@@ -3174,7 +3155,6 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW 7: SETTINGS AND SYNC CONFIG -->
     <section id="view-settings" class="app-view space-y-5 hidden max-w-xl mx-auto">
         <!-- Gemini Key Option Card -->
         <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-4 transition-colors">
