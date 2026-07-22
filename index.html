@@ -81,6 +81,16 @@
         body {
             transition: background-color 0.3s ease, color 0.3s ease;
         }
+        /* iOS Safari Native Date Input Alignment Fix */
+        input[type="date"] {
+            -webkit-appearance: none;
+            appearance: none;
+            min-height: 42px;
+        }
+        input[type="date"]::-webkit-date-and-time-value {
+            text-align: left;
+            margin: 0;
+        }
     </style>
     
     <script>
@@ -2981,9 +2991,7 @@ service cloud.firestore {
             <form onsubmit="saveRecordSubmit(event)" class="space-y-4">
                 <div>
                     <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">消費日期與時間</label>
-                    <div class="w-full max-w-full overflow-hidden box-border">
-                        <input type="date" id="rec-date" required class="w-full max-w-full box-border bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium">
-                    </div>
+                    <input type="date" id="rec-date" required class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium">
                 </div>
 
                 <!-- Restored Account & Type Selectors -->
