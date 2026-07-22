@@ -10,10 +10,10 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="雙兔記帳">
     
-    <!-- iOS 桌面 App 專屬高畫質 Q 版 Emoji 兔兔 PNG 圖示 (替換為可愛 Q 版 Emoji 兔兔 🐰) -->
-    <link rel="apple-touch-icon" sizes="180x180" href="https://fonts.gstatic.com/s/e/notoemoji/latest/1f430/512.png">
-    <link rel="apple-touch-icon-precomposed" href="https://fonts.gstatic.com/s/e/notoemoji/latest/1f430/512.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="https://fonts.gstatic.com/s/e/notoemoji/latest/1f430/512.png">
+    <!-- iOS 桌面 App 專屬橘底白兔輪廓圖示 -->
+    <link rel="apple-touch-icon" id="apple-touch-icon" sizes="180x180" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' fill='%23f97316'/><g fill='%23ffffff'><ellipse cx='65' cy='55' rx='13' ry='38' transform='rotate(-8 65 55)'/><ellipse cx='115' cy='55' rx='13' ry='38' transform='rotate(8 115 55)'/><circle cx='90' cy='114' r='40'/><circle cx='73' cy='122' r='22'/><circle cx='107' cy='122' r='22'/></g></svg>">
+    <link rel="apple-touch-icon-precomposed" id="apple-touch-icon-pre" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' fill='%23f97316'/><g fill='%23ffffff'><ellipse cx='65' cy='55' rx='13' ry='38' transform='rotate(-8 65 55)'/><ellipse cx='115' cy='55' rx='13' ry='38' transform='rotate(8 115 55)'/><circle cx='90' cy='114' r='40'/><circle cx='73' cy='122' r='22'/><circle cx='107' cy='122' r='22'/></g></svg>">
+    <link rel="icon" type="image/png" id="page-favicon" sizes="32x32" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' fill='%23f97316'/><g fill='%23ffffff'><ellipse cx='65' cy='55' rx='13' ry='38' transform='rotate(-8 65 55)'/><ellipse cx='115' cy='55' rx='13' ry='38' transform='rotate(8 115 55)'/><circle cx='90' cy='114' r='40'/><circle cx='73' cy='122' r='22'/><circle cx='107' cy='122' r='22'/></g></svg>">
 
     <!-- Tailwind CSS with custom configuration -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -182,9 +182,67 @@
     }
 
     window.addEventListener('load', () => {
+        generateOrangeRabbitIcon();
         initFirebase();
         initializeAppState();
     });
+
+    function generateOrangeRabbitIcon() {
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = 180;
+            canvas.height = 180;
+            const ctx = canvas.getContext('2d');
+
+            // Vibrant Orange Background
+            ctx.fillStyle = '#f97316';
+            ctx.fillRect(0, 0, 180, 180);
+
+            // Clean White Rabbit Silhouette
+            ctx.fillStyle = '#ffffff';
+
+            // Left Ear
+            ctx.save();
+            ctx.translate(65, 55);
+            ctx.rotate(-0.14);
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 13, 38, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Right Ear
+            ctx.save();
+            ctx.translate(115, 55);
+            ctx.rotate(0.14);
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 13, 38, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Head Center
+            ctx.beginPath();
+            ctx.arc(90, 114, 40, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Cheeks
+            ctx.beginPath();
+            ctx.arc(73, 122, 22, 0, Math.PI * 2);
+            ctx.arc(107, 122, 22, 0, Math.PI * 2);
+            ctx.fill();
+
+            const pngDataUrl = canvas.toDataURL('image/png');
+
+            const el1 = document.getElementById('apple-touch-icon');
+            const el2 = document.getElementById('apple-touch-icon-pre');
+            const el3 = document.getElementById('page-favicon');
+
+            if (el1) el1.href = pngDataUrl;
+            if (el2) el2.href = pngDataUrl;
+            if (el3) el3.href = pngDataUrl;
+        } catch (e) {
+            console.warn("Icon canvas generation fallback error:", e);
+        }
+    }
 
     const state = {
         theme: localStorage.getItem('ledger_theme') || 'light',
@@ -2662,7 +2720,7 @@ service cloud.firestore {
         </div>
     </div>
 
-    <!-- Right Control Options (Desktop Nav, AI Button & Theme Toggle Button) -->
+    <!-- Right Control Options (Desktop Nav, Top Right AI Button & Theme Toggle) -->
     <div class="flex items-center gap-2 md:gap-3">
         <!-- Desktop Navigation Links -->
         <nav class="hidden md:flex items-center gap-1">
@@ -2676,7 +2734,7 @@ service cloud.firestore {
             </button>
         </nav>
 
-        <!-- Header AI Button (Top right next to theme toggle) -->
+        <!-- Top Right compact AI Button -->
         <button onclick="switchView('ai-chat')" class="px-2.5 py-1.5 rounded-xl bg-orange-50 dark:bg-orange-950/30 hover:bg-orange-100 dark:hover:bg-orange-900/40 text-orange-600 dark:text-orange-400 border border-orange-200/60 dark:border-orange-800/40 text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer">
             <i class="fa-solid fa-wand-magic-sparkles text-xs animate-pulse"></i>
             <span>起粑 AI</span>
@@ -2692,6 +2750,7 @@ service cloud.firestore {
 
 <main class="flex-grow max-w-4xl w-full mx-auto p-4 md:py-6">
 
+    <!-- VIEW 1: HOME PAGE OVERVIEW -->
     <section id="view-home" class="app-view space-y-5">
 
         <div class="flex items-center justify-between bg-white dark:bg-zinc-900 p-3.5 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm transition-colors">
@@ -2781,6 +2840,7 @@ service cloud.firestore {
         </div>
     </section>
 
+    <!-- VIEW 2: RECORDS LIST AND ADVANCED SEARCH -->
     <section id="view-records" class="app-view space-y-4 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800 dark:text-zinc-100">歷史收支明細</h2>
@@ -2873,6 +2933,7 @@ service cloud.firestore {
         <div id="records-list-container" class="space-y-4"></div>
     </section>
 
+    <!-- VIEW 3: ADD RECORD FORM -->
     <section id="view-add" class="app-view hidden max-w-xl mx-auto">
         <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-5 transition-colors">
             <div class="flex items-center justify-between">
@@ -2991,6 +3052,7 @@ service cloud.firestore {
         </div>
     </section>
 
+    <!-- VIEW 4: STATS CHARTS -->
     <section id="view-stats" class="app-view space-y-5 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800 dark:text-zinc-100">每月消費數據統計</h2>
@@ -3050,6 +3112,7 @@ service cloud.firestore {
         </div>
     </section>
 
+    <!-- VIEW 5: AI CHAT ASSISTANT -->
     <section id="view-ai-chat" class="app-view space-y-4 hidden max-w-2xl mx-auto">
         <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm flex flex-col h-[70vh] justify-between transition-colors">
             
@@ -3090,6 +3153,7 @@ service cloud.firestore {
         </div>
     </section>
 
+    <!-- VIEW 6: CATEGORIES MANAGEMENT -->
     <section id="view-categories" class="app-view space-y-4 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800 dark:text-zinc-100">消費類別管理</h2>
@@ -3117,6 +3181,7 @@ service cloud.firestore {
         </div>
     </section>
 
+    <!-- VIEW 7: SETTINGS AND SYNC CONFIG -->
     <section id="view-settings" class="app-view space-y-5 hidden max-w-xl mx-auto">
         <!-- Gemini Key Option Card -->
         <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-4 transition-colors">
