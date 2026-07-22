@@ -10,8 +10,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="雙兔記帳">
     
-    <!-- iOS 桌面 App 圖示 -->
-    <link rel="apple-touch-icon" href="https://placehold.co/180x180/0ea5e9/ffffff?text=🐾">
+    <!-- iOS 桌面 App 專屬可愛兔兔圖示 (Data URI SVG) -->
+    <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='120' fill='%230ea5e9'/><text x='50%' y='54%' dominant-baseline='central' text-anchor='middle' font-size='320'>🐰</text></svg>">
 
     <!-- Tailwind CSS with custom configuration -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -199,7 +199,7 @@
         categories: [],
         templates: [],
         selectedMonth: new Date().toISOString().substring(0, 7), // YYYY-MM
-        recordTabFilter: 'all', // 'all', 'expense', 'income' (Sleek tab view)
+        recordTabFilter: 'all', // 'all', 'expense', 'income'
         editId: null,
         copyId: null,
         isUploading: false,
@@ -212,6 +212,8 @@
     };
 
     const defaultCategories = [
+        { id: 'c0_1', account: 'living', type: 'expense', name: '活力早餐', icon: 'fa-bread-slice', color: '#f59e0b' },
+        { id: 'c0_2', account: 'living', type: 'expense', name: '美味午餐', icon: 'fa-bowl-rice', color: '#eab308' },
         { id: 'c1', account: 'living', type: 'expense', name: '外食晚餐', icon: 'fa-utensils', color: '#0ea5e9' },
         { id: 'c2', account: 'living', type: 'expense', name: '日常飲料', icon: 'fa-glass-water', color: '#38bdf8' },
         { id: 'c3', account: 'living', type: 'expense', name: '買菜下廚', icon: 'fa-carrot', color: '#22c55e' },
@@ -246,9 +248,23 @@
             state.categories = defaultCategories;
         } else {
             state.categories = JSON.parse(localStorage.getItem('ledger_categories'));
-            const hasRabbitIncome = state.categories.some(c => c.account === 'rabbit' && c.type === 'income');
-            if (!hasRabbitIncome) {
-                state.categories.push({ id: 'c18', account: 'rabbit', type: 'income', name: '起粑基金', icon: 'fa-coins', color: '#10b981' });
+            
+            // Auto-heal missing categories
+            const requiredCats = [
+                { id: 'c0_1', account: 'living', type: 'expense', name: '活力早餐', icon: 'fa-bread-slice', color: '#f59e0b' },
+                { id: 'c0_2', account: 'living', type: 'expense', name: '美味午餐', icon: 'fa-bowl-rice', color: '#eab308' },
+                { id: 'c18', account: 'rabbit', type: 'income', name: '起粑基金', icon: 'fa-coins', color: '#10b981' }
+            ];
+
+            let stateUpdated = false;
+            requiredCats.forEach(rc => {
+                if (!state.categories.some(c => c.account === rc.account && c.type === rc.type && c.name === rc.name)) {
+                    state.categories.push(rc);
+                    stateUpdated = true;
+                }
+            });
+
+            if (stateUpdated) {
                 localStorage.setItem('ledger_categories', JSON.stringify(state.categories));
             }
         }
@@ -404,18 +420,22 @@ service cloud.firestore {
             } else {
                 state.categories = filtered;
                 
-                // Keep cloud categories self-healing
-                const hasRabbitIncome = state.categories.some(c => c.account === 'rabbit' && c.type === 'income');
-                if (!hasRabbitIncome && isFirebaseReady && auth.currentUser) {
-                    addDoc(categoriesCol, {
-                        bookId: state.syncCode,
-                        account: 'rabbit',
-                        type: 'income',
-                        name: '起粑基金',
-                        icon: 'fa-coins',
-                        color: '#10b981'
-                    }).catch(err => console.error("Auto-syncing 起粑基金 category failed:", err));
-                }
+                // Keep cloud categories self-healing for required defaults
+                const requiredCats = [
+                    { account: 'living', type: 'expense', name: '活力早餐', icon: 'fa-bread-slice', color: '#f59e0b' },
+                    { account: 'living', type: 'expense', name: '美味午餐', icon: 'fa-bowl-rice', color: '#eab308' },
+                    { account: 'rabbit', type: 'income', name: '起粑基金', icon: 'fa-coins', color: '#10b981' }
+                ];
+
+                requiredCats.forEach(rc => {
+                    const exists = state.categories.some(c => c.account === rc.account && c.type === rc.type && c.name === rc.name);
+                    if (!exists && isFirebaseReady && auth.currentUser) {
+                        addDoc(categoriesCol, {
+                            bookId: state.syncCode,
+                            ...rc
+                        }).catch(err => console.error(`Auto-syncing ${rc.name} category failed:`, err));
+                    }
+                });
 
                 saveLocalData();
                 renderApp();
@@ -830,6 +850,12 @@ service cloud.firestore {
             ? `<span class="text-amber-600 dark:text-amber-400 font-semibold text-[10px] flex items-center gap-0.5 whitespace-nowrap ml-1.5"><i class="fa-solid fa-store text-[9px]"></i> ${r.channel}</span>` 
             : '';
 
+        // Settlement Status Badge
+        const isSettled = r.isSettled === true;
+        const settlementBadge = isSettled
+            ? `<span class="px-1.5 py-0.5 rounded-md font-semibold text-[10px] whitespace-nowrap bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"><i class="fa-solid fa-check text-[9px]"></i> 已結清</span>`
+            : `<span class="px-1.5 py-0.5 rounded-md font-semibold text-[10px] whitespace-nowrap bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"><i class="fa-regular fa-clock text-[9px]"></i> 未結清</span>`;
+
         return `
             <div class="flex items-center justify-between p-3.5 bg-white dark:bg-zinc-900 rounded-xl border border-slate-100 dark:border-zinc-800 hover:border-slate-200 dark:hover:border-zinc-700 hover:shadow-sm dark:hover:shadow-none transition-all cursor-pointer" onclick="openRecordActionMenu('${r.id}')">
                 <div class="flex items-center gap-3 min-w-0 flex-1">
@@ -842,18 +868,19 @@ service cloud.firestore {
                             <span class="font-bold text-sm text-slate-800 dark:text-zinc-200 truncate">${r.title || r.category}</span>
                             ${clipIcon}
                         </div>
-                        <!-- Subtitle Metadata Stack: Uniform Layout & Spacing -->
+                        <!-- Subtitle Metadata Stack -->
                         <div class="mt-1 flex flex-col gap-1 text-[11px]">
-                            <!-- Row 2: Date & Optional Store Channel -->
+                            <!-- Row 2: Date & Store Channel -->
                             <div class="flex items-center text-slate-400 dark:text-zinc-500 gap-1.5">
                                 <i class="fa-regular fa-calendar-days text-[10px]"></i>
                                 <span class="font-medium whitespace-nowrap">${formatDate(r.date)}</span>
                                 ${channelStr}
                             </div>
-                            <!-- Row 3: Account & Payer Badges (Uniform Height Guarantee) -->
-                            <div class="flex items-center gap-1.5 pt-0.5">
+                            <!-- Row 3: Account, Payer & Settlement Badges -->
+                            <div class="flex items-center gap-1.5 pt-0.5 flex-wrap">
                                 ${accountBadge}
                                 <span class="px-1.5 py-0.5 rounded-md font-semibold text-[10px] whitespace-nowrap ${getPayerBadgeClass(r.payer)}">${r.payer}</span>
+                                ${settlementBadge}
                             </div>
                         </div>
                     </div>
@@ -952,6 +979,19 @@ service cloud.firestore {
         document.getElementById('ins-val-notes').innerText = r.note || '（未輸入備註）';
         document.getElementById('ins-val-creator').innerText = `${r.createdBy || '未知'} (修改: ${r.updatedBy || '無'})`;
 
+        // Settlement Status text & quick button
+        const isSettled = r.isSettled === true;
+        const statusEl = document.getElementById('ins-val-settled');
+        const toggleBtnText = document.getElementById('ins-toggle-settled-btn-text');
+        
+        if (isSettled) {
+            statusEl.innerHTML = `<span class="text-emerald-600 dark:text-emerald-400 font-bold"><i class="fa-solid fa-circle-check"></i> 已結清</span>`;
+            if (toggleBtnText) toggleBtnText.innerText = "標示為未結清 ⏳";
+        } else {
+            statusEl.innerHTML = `<span class="text-amber-600 dark:text-amber-400 font-bold"><i class="fa-solid fa-clock"></i> 代墊未結清</span>`;
+            if (toggleBtnText) toggleBtnText.innerText = "一鍵結清代墊 ✅";
+        }
+
         // Render channel section dynamically
         const insValChannelRow = document.getElementById('ins-row-channel');
         if (isRabbit && !isIncome && r.channel) {
@@ -987,6 +1027,44 @@ service cloud.firestore {
         if (modal) modal.classList.add('hidden');
     };
 
+    window.toggleRecordSettlementStatus = async function() {
+        const id = targetRecordIdForActions;
+        const r = state.records.find(item => item.id === id);
+        if (!r) return;
+
+        const newSettledState = !r.isSettled;
+        showLoading(true);
+
+        try {
+            if (isFirebaseReady) {
+                if (!auth || !auth.currentUser) {
+                    showToast('未登入或連線中斷', 'danger');
+                    return;
+                }
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', id);
+                await updateDoc(docRef, {
+                    isSettled: newSettledState,
+                    updatedBy: state.currentUser,
+                    updatedAt: Date.now()
+                });
+            } else {
+                r.isSettled = newSettledState;
+                r.updatedBy = state.currentUser;
+                r.updatedAt = Date.now();
+                saveLocalData();
+                renderApp();
+            }
+
+            showToast(newSettledState ? '🎉 已標示為「已結清」！' : '⏳ 已重置為「未結清」', 'success');
+            openRecordActionMenu(id); // Refresh inspector values
+        } catch (e) {
+            console.error("Settlement toggle failed:", e);
+            showToast('更新結清狀態失敗', 'danger');
+        } finally {
+            showLoading(false);
+        }
+    };
+
     window.handleEditAction = function() {
         const id = targetRecordIdForActions;
         closeRecordActionMenu();
@@ -1009,6 +1087,7 @@ service cloud.firestore {
             document.getElementById('rec-title').value = r.title || '';
             document.getElementById('rec-payer').value = r.payer || '';
             document.getElementById('rec-pay-method').value = r.payMethod || '現金';
+            document.getElementById('rec-settled').value = (r.isSettled === true) ? 'true' : 'false';
             document.getElementById('rec-notes').value = r.note || '';
 
             if (r.account === 'rabbit' && r.type === 'expense') {
@@ -1041,6 +1120,7 @@ service cloud.firestore {
             document.getElementById('rec-title').value = `${r.title || ''}`;
             document.getElementById('rec-payer').value = r.payer || '';
             document.getElementById('rec-pay-method').value = r.payMethod || '現金';
+            document.getElementById('rec-settled').value = (r.isSettled === true) ? 'true' : 'false';
             document.getElementById('rec-notes').value = r.note || '';
 
             if (r.account === 'rabbit' && r.type === 'expense') {
@@ -1136,6 +1216,7 @@ service cloud.firestore {
         document.getElementById('rec-amount').value = '';
         document.getElementById('rec-notes').value = '';
         document.getElementById('rec-channel').value = '';
+        document.getElementById('rec-settled').value = 'false';
         formImages = [];
         renderFormImagePreviews([]);
     }
@@ -1338,6 +1419,7 @@ service cloud.firestore {
         const title = document.getElementById('rec-title').value.trim();
         const payer = document.getElementById('rec-payer').value;
         const payMethod = document.getElementById('rec-pay-method').value;
+        const isSettled = document.getElementById('rec-settled').value === 'true';
         const note = document.getElementById('rec-notes').value.trim();
         const channel = document.getElementById('rec-channel').value.trim();
 
@@ -1365,6 +1447,7 @@ service cloud.firestore {
             title: title || category,
             payer,
             payMethod,
+            isSettled,
             note,
             channel: (account === 'rabbit' && type === 'expense') ? channel : '',
             images: formImages,
@@ -1425,6 +1508,7 @@ service cloud.firestore {
         const filterAccount = document.getElementById('filter-account').value;
         const filterCategory = document.getElementById('filter-category').value;
         const filterPayer = document.getElementById('filter-payer').value;
+        const filterSettled = document.getElementById('filter-settled').value;
         const searchKeyword = document.getElementById('filter-keyword').value.trim().toLowerCase();
         const minAmt = parseFloat(document.getElementById('filter-min-amount').value);
         const maxAmt = parseFloat(document.getElementById('filter-max-amount').value);
@@ -1448,6 +1532,10 @@ service cloud.firestore {
         }
         if (filterPayer !== 'all') {
             filtered = filtered.filter(r => r.payer === filterPayer);
+        }
+        if (filterSettled !== 'all') {
+            const expectSettled = filterSettled === 'true';
+            filtered = filtered.filter(r => (r.isSettled === true) === expectSettled);
         }
         if (searchKeyword) {
             filtered = filtered.filter(r => 
@@ -1582,6 +1670,7 @@ service cloud.firestore {
         document.getElementById('filter-type').value = 'all';
         document.getElementById('filter-category').value = 'all';
         document.getElementById('filter-payer').value = 'all';
+        document.getElementById('filter-settled').value = 'all';
         document.getElementById('filter-keyword').value = '';
         document.getElementById('filter-min-amount').value = '';
         document.getElementById('filter-max-amount').value = '';
@@ -1607,7 +1696,7 @@ service cloud.firestore {
             return;
         }
 
-        const headers = ['日期', '帳本帳戶', '收支類型', '金額', '消費分類', '項目名稱', '付款人', '付款方式', '購買通路(起粑)', '備註', '新增者'];
+        const headers = ['日期', '帳本帳戶', '收支類型', '金額', '消費分類', '項目名稱', '付款人', '付款方式', '代墊結清', '購買通路(起粑)', '備註', '新增者'];
         const csvRows = [];
         csvRows.push('\uFEFF' + headers.join(',')); 
 
@@ -1621,6 +1710,7 @@ service cloud.firestore {
                 `"${(r.title || '').replace(/"/g, '""')}"`,
                 r.payer,
                 r.payMethod,
+                r.isSettled ? '已結清' : '未結清',
                 `"${(r.channel || '').replace(/"/g, '""')}"`,
                 `"${(r.note || '').replace(/"/g, '""')}"`,
                 r.createdBy || ''
@@ -2024,7 +2114,6 @@ service cloud.firestore {
         localStorage.setItem('ledger_user_name', state.currentUser);
         localStorage.setItem('ledger_partner_name', state.partnerUser);
 
-        // Update name references inside dropdown menus dynamically
         updateDynamicPayerDropdowns();
 
         showToast('設定已儲存！', 'success');
@@ -2418,6 +2507,7 @@ service cloud.firestore {
                 分類: r.category,
                 名稱: r.title,
                 付款人: r.payer,
+                結清: r.isSettled ? '已結清' : '未結清',
                 通路: r.channel || '',
                 備註: r.note || ''
             }));
@@ -2431,7 +2521,7 @@ service cloud.firestore {
             - 明細資料：${JSON.stringify(recordsSummary)}
             `;
 
-            const systemPrompt = `你是一個溫慢、親切的伴侶與起粑🐰（一隻非常受寵愛的兔子）的專屬記帳小助手，名叫『起粑理財小助理』。
+            const systemPrompt = `你是一個溫柔、親切的伴侶與起粑🐰（一隻非常受寵愛的兔子）的專屬記帳小助手，名叫『起粑理財小助理』。
             你非常熱愛起粑、了解起粑的護理知識（包括牧草種類如提摩西、燕麥草、飼料、健檢、以及各類店面通路採購等花費），且非常幽默擅長夫妻或情侶間的理財規劃。
             請根據使用者傳送的提問以及我為你注入的【當月記帳數據】進行貼心、生動的回答，多用「起粑🐰」來提及兔子的事情。
             請使用繁體中文（台灣習慣用語，如『發票』『電子支付』『便當』『提摩西草』等）。
@@ -2478,7 +2568,6 @@ service cloud.firestore {
             const indicator = document.getElementById(typingId);
             if (indicator) indicator.remove();
 
-            // Dynamic offline fallback as safeguard
             const responseText = generateLocalAiResponse(text);
             state.chatHistory.push({ role: 'assistant', text: responseText + "\n\n*(💡 起粑提醒：因雲端連線失敗，目前由本地分析引擎提供溫馨回覆)*" });
             renderAiChatHistory();
@@ -2507,7 +2596,6 @@ service cloud.firestore {
             document.documentElement.classList.remove('dark');
         }
         
-        // Redraw stats dynamically with updated dark grid lines if we are inside the stats page!
         if (state.currentView === 'stats') {
             renderStatsView();
         }
@@ -2571,20 +2659,25 @@ service cloud.firestore {
         </div>
     </div>
 
-    <!-- Right Control Options (Desktop Nav & Theme Toggle Button) -->
-    <div class="flex items-center gap-3">
+    <!-- Right Control Options (Desktop Nav, AI Button & Theme Toggle Button) -->
+    <div class="flex items-center gap-2 md:gap-3">
         <!-- Desktop Navigation Links -->
         <nav class="hidden md:flex items-center gap-1">
             <a href="#" onclick="switchView('home')" class="px-3.5 py-2 rounded-xl text-sm font-bold text-slate-600 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-zinc-100 transition-colors">首頁總覽</a>
             <a href="#" onclick="switchView('records')" class="px-3.5 py-2 rounded-xl text-sm font-bold text-slate-600 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-zinc-100 transition-colors">歷史紀錄</a>
             <a href="#" onclick="switchView('stats')" class="px-3.5 py-2 rounded-xl text-sm font-bold text-slate-600 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-zinc-100 transition-colors">統計圖表</a>
-            <a href="#" onclick="switchView('ai-chat')" class="px-3.5 py-2 rounded-xl text-sm font-bold text-brand-rabbit bg-orange-50 dark:bg-orange-950/20 hover:bg-orange-100 dark:hover:bg-orange-900/40 hover:text-orange-800 dark:hover:text-orange-300 transition-all flex items-center gap-1"><i class="fa-solid fa-wand-magic-sparkles text-xs"></i> AI 分析助理</a>
             <a href="#" onclick="switchView('categories')" class="px-3.5 py-2 rounded-xl text-sm font-bold text-slate-600 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-zinc-100 transition-colors">分類管理</a>
             <a href="#" onclick="switchView('settings')" class="px-3.5 py-2 rounded-xl text-sm font-bold text-slate-600 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800 hover:text-slate-800 dark:hover:text-zinc-100 transition-colors">成員設定</a>
             <button onclick="resetRecordForm(); switchView('add');" class="ml-2 bg-gradient-to-r from-brand-living to-brand-livingDark text-white px-4 py-2 rounded-xl text-xs font-black shadow-sm flex items-center gap-1 hover:brightness-105 transition-all">
                 <i class="fa-solid fa-plus text-[10px]"></i> 新增收支
             </button>
         </nav>
+
+        <!-- Header AI Button (Moved to top right next to theme toggle) -->
+        <button onclick="switchView('ai-chat')" class="px-2.5 py-1.5 rounded-xl bg-orange-50 dark:bg-orange-950/30 hover:bg-orange-100 dark:hover:bg-orange-900/40 text-orange-600 dark:text-orange-400 border border-orange-200/60 dark:border-orange-800/40 text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-sm cursor-pointer">
+            <i class="fa-solid fa-wand-magic-sparkles text-xs animate-pulse"></i>
+            <span>起粑 AI</span>
+        </button>
 
         <!-- Dynamic Dark/Light Theme Switch Button -->
         <button onclick="toggleTheme()" class="w-9 h-9 flex items-center justify-center rounded-xl bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-600 dark:text-zinc-300 transition-all cursor-pointer shadow-sm border border-slate-200/40 dark:border-zinc-700/60" id="theme-toggle-btn">
@@ -2596,21 +2689,7 @@ service cloud.firestore {
 
 <main class="flex-grow max-w-4xl w-full mx-auto p-4 md:py-6">
 
-    <!-- VIEW 1: HOME PAGE OVERVIEW -->
     <section id="view-home" class="app-view space-y-5">
-        <!-- Sleek, non-intrusive AI Banner -->
-        <div onclick="switchView('ai-chat')" class="bg-gradient-to-r from-orange-500/10 to-brand-rabbit/10 hover:from-orange-500/15 hover:to-brand-rabbit/15 border border-orange-200/40 dark:border-orange-900/30 p-2.5 rounded-2xl flex items-center justify-between cursor-pointer transition-all">
-            <div class="flex items-center gap-2.5 min-w-0">
-                <span class="text-xl shrink-0 animate-pulse">🐰</span>
-                <div class="min-w-0">
-                    <h4 class="text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5">
-                        起粑 AI 記帳分析助理上線囉！
-                    </h4>
-                    <p class="text-[10px] text-slate-500 dark:text-zinc-400 truncate mt-0.5">點此快速診斷本月花費比例、存超支 analysis 🐾</p>
-                </div>
-            </div>
-            <i class="fa-solid fa-angle-right text-xs text-orange-500 shrink-0 ml-2"></i>
-        </div>
 
         <div class="flex items-center justify-between bg-white dark:bg-zinc-900 p-3.5 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm transition-colors">
             <button onclick="changeOverviewMonth('prev')" class="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-600 dark:text-zinc-300 cursor-pointer transition-colors">
@@ -2665,13 +2744,13 @@ service cloud.firestore {
                         <p id="home-total-income" class="text-base font-extrabold text-slate-800 dark:text-zinc-100">$0</p>
                     </div>
                 </div>
-                <span class="text-xs text-slate-400 dark:text-zinc-505 font-medium">薪資、兼職與其他</span>
+                <span class="text-xs text-slate-400 dark:text-zinc-500 font-medium">薪資、兼職與其他</span>
             </div>
         </div>
 
         <div class="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-2 transition-all">
-            <h4 class="text-xs font-bold text-slate-400 dark:text-zinc-505 flex items-center gap-1">
-                <i class="fa-solid fa-chart-line"></i> 收支差異 analysis
+            <h4 class="text-xs font-bold text-slate-400 dark:text-zinc-500 flex items-center gap-1">
+                <i class="fa-solid fa-chart-line"></i> 收支差異分析
             </h4>
             <div id="mom-comparison-text" class="pt-1">
                 <div class="h-4 bg-slate-100 dark:bg-zinc-800 rounded-md animate-pulse w-2/3"></div>
@@ -2683,7 +2762,7 @@ service cloud.firestore {
                 <h3 class="text-sm font-bold text-slate-600 dark:text-zinc-300 flex items-center gap-1.5">
                     <i class="fa-solid fa-wand-magic-sparkles text-brand-living"></i> 常用項目快速記帳
                 </h3>
-                <span class="text-[10px] text-slate-400 dark:text-zinc-550">點按立即帶入</span>
+                <span class="text-[10px] text-slate-400 dark:text-zinc-500">點按立即帶入</span>
             </div>
             <div id="quick-templates-container" class="flex gap-2 overflow-x-auto pb-1.5 hide-scrollbar w-full"></div>
         </div>
@@ -2699,7 +2778,6 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW 2: RECORDS LIST AND ADVANCED SEARCH -->
     <section id="view-records" class="app-view space-y-4 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800 dark:text-zinc-100">歷史收支明細</h2>
@@ -2728,7 +2806,7 @@ service cloud.firestore {
 
         <div id="advanced-filter-panel" class="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-4 hidden transition-all">
             <h3 class="text-xs font-black text-slate-400 dark:text-zinc-500 uppercase tracking-wider mb-2">多維度篩選器</h3>
-            <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
                     <label class="block text-[10px] font-bold text-slate-400 dark:text-zinc-500 mb-1">所屬帳本</label>
                     <select id="filter-account" onchange="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2.5 py-2 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
@@ -2752,6 +2830,14 @@ service cloud.firestore {
                     </select>
                 </div>
                 <div>
+                    <label class="block text-[10px] font-bold text-slate-400 dark:text-zinc-500 mb-1">代墊結清狀態</label>
+                    <select id="filter-settled" onchange="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2.5 py-2 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                        <option value="all">所有結清狀態</option>
+                        <option value="false">⏳ 未結清 (代墊中)</option>
+                        <option value="true">✅ 已結清</option>
+                    </select>
+                </div>
+                <div>
                     <label class="block text-[10px] font-bold text-slate-400 dark:text-zinc-500 mb-1">付款或紀錄人</label>
                     <select id="filter-payer" onchange="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2.5 py-2 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
                         <option value="all">所有人</option>
@@ -2767,14 +2853,6 @@ service cloud.firestore {
                 <div>
                     <label class="block text-[10px] font-bold text-slate-400 dark:text-zinc-500 mb-1">金額上限</label>
                     <input type="number" id="filter-max-amount" placeholder="無上限" oninput="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
-                </div>
-                <div>
-                    <label class="block text-[10px] font-bold text-slate-400 dark:text-zinc-500 mb-1">日期起點</label>
-                    <input type="date" id="filter-date-from" onchange="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2 py-1 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
-                </div>
-                <div>
-                    <label class="block text-[10px] font-bold text-slate-400 dark:text-zinc-500 mb-1">日期終點</label>
-                    <input type="date" id="filter-date-to" onchange="triggerSearchFilter()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-2 py-1 text-xs focus:ring-1 focus:ring-brand-living outline-none font-medium">
                 </div>
             </div>
 
@@ -2792,7 +2870,6 @@ service cloud.firestore {
         <div id="records-list-container" class="space-y-4"></div>
     </section>
 
-    <!-- VIEW 3: NEW RECORD ADDITION / EDIT FORM -->
     <section id="view-add" class="app-view hidden max-w-xl mx-auto">
         <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-5 transition-colors">
             <div class="flex items-center justify-between">
@@ -2836,7 +2913,7 @@ service cloud.firestore {
                 <div id="channel-field-wrapper" class="hidden">
                     <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5 flex items-center gap-1.5">
                         🛒 購買通路/商店
-                        <span class="text-[10px] font-normal text-slate-400 dark:text-zinc-550">（例如：蝦皮、牧草圓頂、寵物公園）</span>
+                        <span class="text-[10px] font-normal text-slate-400 dark:text-zinc-500">（例如：蝦皮、牧草圓頂、寵物公園）</span>
                     </label>
                     <input type="text" id="rec-channel" placeholder="請輸入店名、平台或院所名稱" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium text-slate-800 dark:text-zinc-100">
                 </div>
@@ -2873,6 +2950,14 @@ service cloud.firestore {
                 </div>
 
                 <div>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">代墊結清狀態</label>
+                    <select id="rec-settled" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
+                        <option value="false">⏳ 未結清 (代墊中)</option>
+                        <option value="true">✅ 已結清 (已歸還/無需歸還)</option>
+                    </select>
+                </div>
+
+                <div>
                     <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">備註說明</label>
                     <textarea id="rec-notes" rows="2" placeholder="詳細內容、分攤細節、買給誰等..." class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium resize-none"></textarea>
                 </div>
@@ -2903,7 +2988,6 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW 4: STATISTICAL CHARTS AND INSIGHTS -->
     <section id="view-stats" class="app-view space-y-5 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800 dark:text-zinc-100">每月消費數據統計</h2>
@@ -2939,23 +3023,23 @@ service cloud.firestore {
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm flex flex-col justify-between transition-colors">
-                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-550 mb-3 uppercase tracking-wider">生活開銷類別占比</h3>
+                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-500 mb-3 uppercase tracking-wider">生活開銷類別占比</h3>
                 <div class="relative h-60 flex items-center justify-center w-full">
                     <canvas id="chart-living-cats" class="w-full h-full"></canvas>
-                    <div id="living-chart-fallback" class="hidden text-slate-400 dark:text-zinc-550 text-xs text-center py-10 w-full">此月份無生活開銷</div>
+                    <div id="living-chart-fallback" class="hidden text-slate-400 dark:text-zinc-500 text-xs text-center py-10 w-full">此月份無生活開銷</div>
                 </div>
             </div>
 
             <div class="bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm flex flex-col justify-between transition-colors">
-                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-550 mb-3 uppercase tracking-wider">起粑開銷類別占比</h3>
+                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-500 mb-3 uppercase tracking-wider">起粑開銷類別占比</h3>
                 <div class="relative h-60 flex items-center justify-center w-full">
                     <canvas id="chart-rabbit-cats" class="w-full h-full"></canvas>
-                    <div id="rabbit-chart-fallback" class="hidden text-slate-400 dark:text-zinc-550 text-xs text-center py-10 w-full">此月份無起粑開銷</div>
+                    <div id="rabbit-chart-fallback" class="hidden text-slate-400 dark:text-zinc-500 text-xs text-center py-10 w-full">此月份無起粑開銷</div>
                 </div>
             </div>
 
             <div class="col-span-1 md:col-span-2 bg-white dark:bg-zinc-900 p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 shadow-sm transition-colors">
-                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-550 mb-3 uppercase tracking-wider">當月每日支出趨勢</h3>
+                <h3 class="text-xs font-black text-slate-400 dark:text-zinc-500 mb-3 uppercase tracking-wider">當月每日支出趨勢</h3>
                 <div class="h-44 w-full">
                     <canvas id="chart-daily-trend" class="w-full h-full"></canvas>
                 </div>
@@ -2963,7 +3047,6 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW: AI ASSISTANT CHATBOT -->
     <section id="view-ai-chat" class="app-view space-y-4 hidden max-w-2xl mx-auto">
         <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm flex flex-col h-[70vh] justify-between transition-colors">
             
@@ -3005,7 +3088,6 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW 5: CATEGORY MANAGEMENT -->
     <section id="view-categories" class="app-view space-y-4 hidden">
         <div class="flex items-center justify-between">
             <h2 class="text-base font-extrabold text-slate-800 dark:text-zinc-100">消費類別管理</h2>
@@ -3033,9 +3115,8 @@ service cloud.firestore {
         </div>
     </section>
 
-    <!-- VIEW 6: SETTINGS, COLLABORATION, BACKUPS -->
     <section id="view-settings" class="app-view space-y-5 hidden max-w-xl mx-auto">
-        <!-- New Gemini Key Option Card -->
+        <!-- Gemini Key Option Card -->
         <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-4 transition-colors">
             <h3 class="text-sm font-extrabold text-slate-800 dark:text-zinc-100 flex items-center gap-1.5">
                 <i class="fa-solid fa-wand-magic-sparkles text-indigo-500"></i> Google Gemini AI API 金鑰設定
@@ -3047,7 +3128,7 @@ service cloud.firestore {
                 <div>
                     <label class="block text-[11px] font-black text-slate-400 dark:text-zinc-500 mb-1">Gemini API Key</label>
                     <input type="password" id="gemini-key-input" placeholder="AIzaSy..." class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-xs font-mono focus:ring-1 focus:ring-brand-living outline-none">
-                    <p class="text-[9px] text-slate-400 dark:text-zinc-550 mt-1">💡 您可以前往 Google AI Studio 免費申請個人專屬的 Gemini API Key。</p>
+                    <p class="text-[9px] text-slate-400 dark:text-zinc-500 mt-1">💡 您可以前往 Google AI Studio 免費申請個人專屬的 Gemini API Key。</p>
                 </div>
                 <div class="flex gap-2">
                     <button onclick="saveCustomGeminiKey()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl text-xs font-black transition-colors">
@@ -3103,7 +3184,7 @@ service cloud.firestore {
                     <div class="flex gap-2">
                         <input type="text" id="sync-code-input" placeholder="LOVERABBIT2026" class="flex-grow bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm font-extrabold tracking-wide focus:ring-1 focus:ring-brand-living outline-none">
                     </div>
-                    <p class="text-[10px] text-slate-400 dark:text-zinc-550 mt-1">💡 當你與女友輸入相同的代碼時，就可以在不同手機上同時讀取與新增相同的記帳資料。</p>
+                    <p class="text-[10px] text-slate-400 dark:text-zinc-500 mt-1">💡 當你與女友輸入相同的代碼時，就可以在不同手機上同時讀取與新增相同的記帳資料。</p>
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
@@ -3139,13 +3220,13 @@ service cloud.firestore {
                 <button onclick="backupLocalJSON()" class="flex flex-col items-center justify-center p-3.5 bg-slate-50 dark:bg-zinc-800 hover:bg-slate-100 dark:hover:bg-zinc-700 border border-slate-100 dark:border-zinc-700 rounded-xl transition-colors cursor-pointer text-center group">
                     <i class="fa-solid fa-cloud-arrow-down text-slate-400 group-hover:text-brand-living text-xl shrink-0"></i>
                     <span class="text-xs font-bold text-slate-600 dark:text-zinc-300 mt-1.5">匯出備份檔案</span>
-                    <span class="text-[9px] text-slate-400 dark:text-zinc-550 mt-0.5">下載為 JSON 檔</span>
+                    <span class="text-[9px] text-slate-400 dark:text-zinc-500 mt-0.5">下載為 JSON 檔</span>
                 </button>
 
                 <label class="flex flex-col items-center justify-center p-3.5 bg-slate-50 dark:bg-zinc-800 hover:bg-slate-100 dark:hover:bg-zinc-700 border border-slate-100 dark:border-zinc-700 rounded-xl transition-colors cursor-pointer text-center group">
                     <i class="fa-solid fa-file-import text-slate-400 group-hover:text-brand-living text-xl shrink-0"></i>
                     <span class="text-xs font-bold text-slate-600 dark:text-zinc-300 mt-1.5">匯入備份檔案</span>
-                    <span class="text-[9px] text-slate-400 dark:text-zinc-550 mt-0.5">讀取備份資料</span>
+                    <span class="text-[9px] text-slate-400 dark:text-zinc-500 mt-0.5">讀取備份資料</span>
                     <input type="file" accept=".json" onchange="restoreLocalJSON(event)" class="hidden">
                 </label>
             </div>
@@ -3181,7 +3262,6 @@ service cloud.firestore {
     </a>
 </nav>
 
-<!-- NEW: Rich Transaction Inspector Expandable Panel -->
 <div id="action-menu-modal" class="fixed inset-0 bg-black/60 z-50 flex items-end justify-center hidden" onclick="closeRecordActionMenu()">
     <div class="bg-white dark:bg-zinc-900 w-full max-w-md rounded-t-3xl p-5 space-y-4 shadow-xl translate-y-0 transition-all duration-300 overflow-y-auto max-h-[90vh]" onclick="event.stopPropagation()">
         
@@ -3196,12 +3276,12 @@ service cloud.firestore {
                     <p class="text-[10px] text-slate-400 dark:text-zinc-500">收支項目查閱詳情</p>
                 </div>
             </div>
-            <button onclick="closeRecordActionMenu()" class="text-slate-400 dark:text-zinc-550 hover:text-slate-600 dark:hover:text-zinc-300 p-1.5"><i class="fa-solid fa-xmark text-lg"></i></button>
+            <button onclick="closeRecordActionMenu()" class="text-slate-400 dark:text-zinc-500 hover:text-slate-600 dark:hover:text-zinc-300 p-1.5"><i class="fa-solid fa-xmark text-lg"></i></button>
         </div>
 
         <!-- Large Price representation -->
         <div class="text-center py-2">
-            <p class="text-[10px] font-bold text-slate-400 dark:text-zinc-550 uppercase tracking-wider">交易金額</p>
+            <p class="text-[10px] font-bold text-slate-400 dark:text-zinc-500 uppercase tracking-wider">交易金額</p>
             <h2 id="ins-amount" class="text-2xl font-black text-slate-800 dark:text-zinc-100 mt-0.5">-NT$0</h2>
         </div>
 
@@ -3212,41 +3292,49 @@ service cloud.firestore {
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">↕️ 交易類型</span><span id="ins-val-type" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">👤 付款/交易人</span><span id="ins-val-payer" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">💳 付款方式</span><span id="ins-val-method" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
+            <div class="flex justify-between items-center"><span class="font-bold text-slate-400 dark:text-zinc-500">🤝 結清狀態</span><span id="ins-val-settled" class="font-semibold"></span></div>
             <div class="flex justify-between"><span class="font-bold text-slate-400 dark:text-zinc-500">📝 登入/修改人</span><span id="ins-val-creator" class="font-semibold text-slate-800 dark:text-zinc-200"></span></div>
             
             <!-- Dynamic channel row inside details dialog -->
             <div id="ins-row-channel" class="flex justify-between hidden"><span class="font-bold text-slate-400 dark:text-zinc-500">🛒 購買通路/商店</span><span id="ins-val-channel" class="font-semibold text-amber-600 dark:text-amber-400"></span></div>
             
-            <div class="flex flex-col pt-1.5 border-t border-slate-200/60 dark:border-zinc-700/60"><span class="font-bold text-slate-400 dark:text-zinc-550 mb-1">💬 備註說明</span><p id="ins-val-notes" class="text-slate-700 dark:text-zinc-300 bg-white dark:bg-zinc-900 p-2.5 rounded-lg border border-slate-200/50 dark:border-zinc-700/50 leading-relaxed font-medium break-all"></p></div>
+            <div class="flex flex-col pt-1.5 border-t border-slate-200/60 dark:border-zinc-700/60"><span class="font-bold text-slate-400 dark:text-zinc-500 mb-1">💬 備註說明</span><p id="ins-val-notes" class="text-slate-700 dark:text-zinc-300 bg-white dark:bg-zinc-900 p-2.5 rounded-lg border border-slate-200/50 dark:border-zinc-700/50 leading-relaxed font-medium break-all"></p></div>
         </div>
 
         <!-- Image Attachment Section -->
         <div id="ins-attachments-section" class="space-y-2 hidden">
-            <h4 class="text-xs font-bold text-slate-400 dark:text-zinc-550 flex items-center gap-1"><i class="fa-solid fa-paperclip"></i> 收據與照片憑證</h4>
+            <h4 class="text-xs font-bold text-slate-400 dark:text-zinc-500 flex items-center gap-1"><i class="fa-solid fa-paperclip"></i> 收據與照片憑證</h4>
             <div id="ins-attachments-container" class="flex gap-2 overflow-x-auto hide-scrollbar py-1"></div>
         </div>
 
         <!-- Management Action buttons -->
-        <div class="grid grid-cols-3 gap-2.5 pt-2 border-t border-slate-100 dark:border-zinc-800">
-            <button onclick="handleEditAction()" class="flex flex-col items-center gap-1.5 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-300 cursor-pointer transition-colors">
+        <div class="grid grid-cols-4 gap-2 pt-2 border-t border-slate-100 dark:border-zinc-800">
+            <button onclick="toggleRecordSettlementStatus()" class="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-300 cursor-pointer transition-colors">
+                <div class="w-9 h-9 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-sm">
+                    <i class="fa-solid fa-handshake-simple"></i>
+                </div>
+                <span id="ins-toggle-settled-btn-text" class="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">一鍵結清 ✅</span>
+            </button>
+
+            <button onclick="handleEditAction()" class="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-300 cursor-pointer transition-colors">
                 <div class="w-9 h-9 rounded-full bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 flex items-center justify-center text-sm">
                     <i class="fa-solid fa-pen-to-square"></i>
                 </div>
-                <span class="text-[10px] font-bold">編輯此筆</span>
+                <span class="text-[9px] font-bold whitespace-nowrap">編輯此筆</span>
             </button>
             
-            <button onclick="handleCopyAction()" class="flex flex-col items-center gap-1.5 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-300 cursor-pointer transition-colors">
+            <button onclick="handleCopyAction()" class="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-slate-50 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-300 cursor-pointer transition-colors">
                 <div class="w-9 h-9 rounded-full bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 flex items-center justify-center text-sm">
                     <i class="fa-solid fa-copy"></i>
                 </div>
-                <span class="text-[10px] font-bold">複製新增</span>
+                <span class="text-[9px] font-bold whitespace-nowrap">複製新增</span>
             </button>
 
-            <button onclick="handleDeleteAction()" class="flex flex-col items-center gap-1.5 p-2 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 cursor-pointer transition-colors">
+            <button onclick="handleDeleteAction()" class="flex flex-col items-center gap-1 p-2 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 cursor-pointer transition-colors">
                 <div class="w-9 h-9 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-600 flex items-center justify-center text-sm">
                     <i class="fa-solid fa-trash-can"></i>
                 </div>
-                <span class="text-[10px] font-bold text-rose-600">刪除明細</span>
+                <span class="text-[9px] font-bold text-rose-600 whitespace-nowrap">刪除明細</span>
             </button>
         </div>
     </div>
@@ -3274,7 +3362,7 @@ service cloud.firestore {
             </div>
             <div>
                 <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1">分類名稱</label>
-                <input type="text" id="cat-modal-name" placeholder="例如：兔子保健食品、水電瓦斯" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-855 dark:text-zinc-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
+                <input type="text" id="cat-modal-name" placeholder="例如：兔子保健食品、水電瓦斯" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
             </div>
             <div>
                 <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1">視覺代表色</label>
@@ -3293,6 +3381,8 @@ service cloud.firestore {
                 <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1">代表圖標</label>
                 <select id="cat-modal-icon" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-1.5 text-xs font-semibold focus:ring-1 focus:ring-brand-living">
                     <option value="fa-tag">🏷️ 標籤</option>
+                    <option value="fa-bread-slice">🥐 早餐</option>
+                    <option value="fa-bowl-rice">🍱 午餐</option>
                     <option value="fa-utensils">🍴 餐飲外食</option>
                     <option value="fa-bowl-food">🍲 飼料食品</option>
                     <option value="fa-seedling">🌱 牧草相關</option>
