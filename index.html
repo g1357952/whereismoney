@@ -572,6 +572,7 @@ service cloud.firestore {
 
         loadLocalData();
         renderAiChatHistory();
+        setupRecordForm();
     }
 
     function updateDynamicPayerDropdowns() {
@@ -588,6 +589,15 @@ service cloud.firestore {
         const tempPayerSelect = document.getElementById('temp-modal-payer');
         if (tempPayerSelect) {
             tempPayerSelect.innerHTML = `
+                <option value="共同分攤">共同分攤</option>
+                <option value="${state.currentUser}">${state.currentUser}</option>
+                <option value="${state.partnerUser}">${state.partnerUser}</option>
+            `;
+        }
+
+        const recPayerSelect = document.getElementById('rec-payer');
+        if (recPayerSelect) {
+            recPayerSelect.innerHTML = `
                 <option value="共同分攤">共同分攤</option>
                 <option value="${state.currentUser}">${state.currentUser}</option>
                 <option value="${state.partnerUser}">${state.partnerUser}</option>
@@ -640,6 +650,14 @@ service cloud.firestore {
                 if (text) text.className = "text-[11px] text-slate-400 dark:text-zinc-400 mt-0.5";
             }
         });
+
+        if (viewName === 'add') {
+            if (!state.editId && !state.copyId) {
+                resetRecordForm();
+            } else {
+                onAccountChange();
+            }
+        }
 
         renderApp();
 
@@ -1230,52 +1248,85 @@ service cloud.firestore {
 
     function setupRecordForm() {
         const today = new Date().toISOString().substring(0, 10);
-        document.getElementById('rec-date').value = today;
+        const dateInput = document.getElementById('rec-date');
+        if (dateInput) dateInput.value = today;
 
+        updateDynamicPayerDropdowns();
         onAccountChange();
         
         formImages = [];
         renderFormImagePreviews([]);
-        
-        const payerSelect = document.getElementById('rec-payer');
-        if (payerSelect) {
-            payerSelect.innerHTML = `
-                <option value="共同分攤">共同分攤</option>
-                <option value="${state.currentUser}">${state.currentUser}</option>
-                <option value="${state.partnerUser}">${state.partnerUser}</option>
-            `;
-        }
     }
 
     function resetRecordForm() {
         state.editId = null;
         state.copyId = null;
-        document.getElementById('form-title').innerText = "新增收支明細";
-        document.getElementById('rec-title').value = '';
-        document.getElementById('rec-amount').value = '';
-        document.getElementById('rec-notes').value = '';
-        document.getElementById('rec-channel').value = '';
-        document.getElementById('rec-settled').value = 'false';
+        const formTitle = document.getElementById('form-title');
+        if (formTitle) formTitle.innerText = "新增收支明細";
+        
+        const dateInput = document.getElementById('rec-date');
+        if (dateInput) dateInput.value = new Date().toISOString().substring(0, 10);
+        
+        const titleInput = document.getElementById('rec-title');
+        if (titleInput) titleInput.value = '';
+
+        const amtInput = document.getElementById('rec-amount');
+        if (amtInput) amtInput.value = '';
+
+        const notesInput = document.getElementById('rec-notes');
+        if (notesInput) notesInput.value = '';
+
+        const channelInput = document.getElementById('rec-channel');
+        if (channelInput) channelInput.value = '';
+
+        const settledInput = document.getElementById('rec-settled');
+        if (settledInput) settledInput.value = 'false';
+
         formImages = [];
         renderFormImagePreviews([]);
+        
+        updateDynamicPayerDropdowns();
+        onAccountChange();
     }
     window.resetRecordForm = resetRecordForm;
 
     window.onAccountChange = function() {
-        const account = document.getElementById('rec-account').value;
-        const type = document.getElementById('rec-type').value;
+        const accountEl = document.getElementById('rec-account');
+        const typeEl = document.getElementById('rec-type');
         const catSelect = document.getElementById('rec-category');
         const channelWrapper = document.getElementById('channel-field-wrapper');
 
-        const filteredCats = state.categories.filter(c => c.account === account && c.type === type);
+        if (!accountEl || !typeEl || !catSelect) return;
+
+        const account = accountEl.value;
+        const type = typeEl.value;
+
+        // Ensure categories exist
+        if (!state.categories || state.categories.length === 0) {
+            state.categories = [...defaultCategories];
+        }
+
+        let filteredCats = state.categories.filter(c => c.account === account && c.type === type);
+        if (filteredCats.length === 0) {
+            // Fallback to defaults
+            filteredCats = defaultCategories.filter(c => c.account === account && c.type === type);
+        }
+
         const uniqueCatNames = [...new Set(filteredCats.map(c => c.name))];
-        catSelect.innerHTML = uniqueCatNames.map(name => `<option value="${name}">${name}</option>`).join('');
-        
-        if (account === 'rabbit' && type === 'expense') {
-            channelWrapper.classList.remove('hidden');
+        if (uniqueCatNames.length > 0) {
+            catSelect.innerHTML = uniqueCatNames.map(name => `<option value="${name}">${name}</option>`).join('');
         } else {
-            channelWrapper.classList.add('hidden');
-            document.getElementById('rec-channel').value = '';
+            catSelect.innerHTML = `<option value="">無對應分類</option>`;
+        }
+
+        if (account === 'rabbit' && type === 'expense') {
+            if (channelWrapper) channelWrapper.classList.remove('hidden');
+        } else {
+            if (channelWrapper) {
+                channelWrapper.classList.add('hidden');
+                const channelInput = document.getElementById('rec-channel');
+                if (channelInput) channelInput.value = '';
+            }
         }
     };
 
@@ -2647,6 +2698,12 @@ service cloud.firestore {
             renderSettingsView();
         } else if (state.currentView === 'ai-chat') {
             renderAiChatHistory();
+        } else if (state.currentView === 'add') {
+            const dateInput = document.getElementById('rec-date');
+            if (dateInput && !dateInput.value) {
+                dateInput.value = new Date().toISOString().substring(0, 10);
+            }
+            onAccountChange();
         }
     }
 
@@ -2912,7 +2969,7 @@ service cloud.firestore {
     </section>
 
     <section id="view-add" class="app-view hidden max-w-xl mx-auto">
-        <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-5 transition-colors">
+        <div class="bg-white dark:bg-zinc-900 p-5 rounded-3xl border border-slate-100 dark:border-zinc-800 shadow-sm space-y-5 transition-colors overflow-hidden">
             <div class="flex items-center justify-between">
                 <h2 id="form-title" class="text-base font-extrabold text-slate-800 dark:text-zinc-100">新增收支明細</h2>
                 <!-- AI Receipt Parser Button -->
@@ -2924,52 +2981,50 @@ service cloud.firestore {
             <form onsubmit="saveRecordSubmit(event)" class="space-y-4">
                 <div>
                     <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">消費日期與時間</label>
-                    <input type="date" id="rec-date" required class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                    <div class="w-full max-w-full overflow-hidden box-border">
+                        <input type="date" id="rec-date" required class="w-full max-w-full box-border bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium">
+                    </div>
                 </div>
 
+                <!-- Restored Account & Type Selectors -->
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">所屬帳本</label>
                         <select id="rec-account" onchange="onAccountChange()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
-                            <option value="living">生活開銷</option>
-                            <option value="rabbit">起粑開銷</option>
+                            <option value="living">🏠 生活開銷</option>
+                            <option value="rabbit">🐾 起粑開銷</option>
                         </select>
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">交易類型</label>
                         <select id="rec-type" onchange="onAccountChange()" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
-                            <option value="expense">支出 (-)</option>
-                            <option value="income">收入 (+)</option>
+                            <option value="expense">💸 支出 (-)</option>
+                            <option value="income">💰 收入 (+)</option>
                         </select>
                     </div>
                 </div>
 
                 <div>
                     <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">消費分類</label>
-                    <select id="rec-category" required class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
+                    <select id="rec-category" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-semibold">
                     </select>
                 </div>
 
-                <!-- Dynamic Purchase Channel Section (Visible only on Rabbit Expense) -->
                 <div id="channel-field-wrapper" class="hidden">
-                    <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5 flex items-center gap-1.5">
-                        🛒 購買通路/商店
-                        <span class="text-[10px] font-normal text-slate-400 dark:text-zinc-500">（例如：蝦皮、牧草圓頂、寵物公園）</span>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5 flex items-center gap-1">
+                        🛒 購買通路/商店 <span class="text-[10px] font-normal text-slate-400">（起粑專屬）</span>
                     </label>
-                    <input type="text" id="rec-channel" placeholder="請輸入店名、平台或院所名稱" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium text-slate-800 dark:text-zinc-100">
+                    <input type="text" id="rec-channel" placeholder="例如：蝦皮購物、牧草圓頂、寵物公園" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium">
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">項目名稱（選填，未填預設為分類名）</label>
+                    <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">項目名稱 <span class="text-[10px] font-normal text-slate-400">（選填，未填預設為分類名）</span></label>
                     <input type="text" id="rec-title" placeholder="例如：提摩西草、全聯買菜、麥當勞" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-sm focus:ring-1 focus:ring-brand-living outline-none font-medium">
                 </div>
 
                 <div>
                     <label class="block text-xs font-bold text-slate-500 dark:text-zinc-400 mb-1.5">交易金額 (TWD)</label>
-                    <div class="relative">
-                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-semibold">NT$</span>
-                        <input type="number" id="rec-amount" required placeholder="0" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl pl-11 pr-3 py-2 text-base font-extrabold focus:ring-1 focus:ring-brand-living outline-none">
-                    </div>
+                    <input type="number" id="rec-amount" required step="any" placeholder="NT$ 0" class="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-100 dark:border-zinc-700 text-slate-800 dark:text-zinc-100 rounded-xl px-3 py-2 text-base font-extrabold focus:ring-1 focus:ring-brand-living outline-none">
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
