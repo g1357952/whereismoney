@@ -84,9 +84,22 @@
       -webkit-appearance: none;
       appearance: none;
     }
+    input[type="month"] {
+      display: block;
+      min-width: 0;
+      max-width: 100%;
+      width: 100%;
+      text-align: left;
+      -webkit-appearance: none;
+      appearance: none;
+    }
     input[type="date"]::-webkit-date-and-time-value {
       text-align: left;
       min-height: 1.5em;
+    }
+    input[type="month"]::-webkit-date-and-time-value {
+      min-width: 0;
+      text-align: left;
     }
     .safe-bottom {
       padding-bottom: calc(.55rem + env(safe-area-inset-bottom));
@@ -364,8 +377,8 @@
           </div>
         </div>
 
-        <section id="records-filters" class="app-card mb-4 hidden rounded-3xl p-4">
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <section id="records-filters" class="app-card mb-4 hidden min-w-0 max-w-full rounded-3xl p-4">
+          <div class="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <input id="filter-search" class="field lg:col-span-2" type="search" placeholder="搜尋品項、分類或商店">
             <input id="filter-month" class="field" type="month">
             <select id="filter-type" class="field">
@@ -1521,6 +1534,18 @@
         : emptyState("fa-magnifying-glass", "找不到符合條件的紀錄", "可以更換月份或清除篩選");
     }
 
+    function resetRecordFilters({ collapse = true, rerender = false } = {}) {
+      state.filter = { search: "", type: "all", settled: "all" };
+      $("filter-search").value = "";
+      $("filter-type").value = "all";
+      $("filter-settled").value = "all";
+      if (collapse) {
+        $("records-filters").classList.add("hidden");
+        $("filter-toggle").setAttribute("aria-expanded", "false");
+      }
+      if (rerender) renderRecords();
+    }
+
     function recordCard(record) {
       const [icon, color] = categoryStyle(record.category, record.account);
       const sign = record.type === "expense" ? "-" : "+";
@@ -1752,6 +1777,8 @@
     }
 
     function setView(view) {
+      const leavingRecords = state.view === "records" && view !== "records";
+      if (leavingRecords) resetRecordFilters();
       state.view = view;
       $("account-switcher").classList.toggle("hidden", view === "home" || view === "settings");
       document.querySelectorAll(".view").forEach(section => section.classList.toggle("active", section.dataset.viewSection === view));
@@ -2564,11 +2591,7 @@
         if (willOpen) setTimeout(() => $("filter-search").focus(), 80);
       });
       $("clear-filters").addEventListener("click", () => {
-        state.filter = { search: "", type: "all", settled: "all" };
-        $("filter-search").value = "";
-        $("filter-type").value = "all";
-        $("filter-settled").value = "all";
-        renderRecords();
+        resetRecordFilters({ collapse: false, rerender: true });
       });
       $("home-month").addEventListener("change", event => setMonth(event.target.value));
       $("filter-month").addEventListener("change", event => setMonth(event.target.value));
