@@ -849,12 +849,12 @@
     const state = {
       account: localStorage.getItem("ledger_active_account") || "living",
       view: "home",
-      month: localStorage.getItem("ledger_selected_month") || today().slice(0, 7),
+      month: today().slice(0, 7),
       syncCode: normalizeCode(localStorage.getItem("ledger_sync_code") || "LOVERABBIT2026"),
       user: localStorage.getItem("ledger_user_name") || "Momo",
       partner: localStorage.getItem("ledger_partner_name") || "Way",
       records: [],
-      filter: { search: "", type: "all", settled: "all" },
+      filter: { month: today().slice(0, 7), search: "", type: "all", settled: "all" },
       formAccount: "living",
       formType: "expense",
       pendingImageFiles: [],
@@ -1474,7 +1474,6 @@
       $("unsettled-count").textContent = `${totals.unsettledCount} 筆代墊・${money(totals.unsettled)}`;
       $("month-title").textContent = monthLabel(state.month);
       $("home-month").value = state.month;
-      $("filter-month").value = state.month;
 
       const expenseRecords = monthRecords.filter(record => record.type === "expense");
       const shared = expenseRecords.filter(record => record.payer === "共同分攤").reduce((sum, record) => sum + record.amount, 0);
@@ -1509,7 +1508,7 @@
 
     function filteredRecords() {
       const search = state.filter.search.trim().toLowerCase();
-      return recordsForMonth().filter(record => {
+      return recordsForMonth(state.account, state.filter.month).filter(record => {
         const matchesType = state.filter.type === "all" || record.type === state.filter.type;
         const matchesSettled = state.filter.settled === "all"
           || (state.filter.settled === "settled" && record.isSettled)
@@ -1521,8 +1520,10 @@
 
     function renderRecords() {
       const records = filteredRecords();
-      $("record-count-label").textContent = `${monthLabel(state.month)}・${records.length} 筆紀錄`;
+      $("filter-month").value = state.filter.month;
+      $("record-count-label").textContent = `${monthLabel(state.filter.month)}・${records.length} 筆紀錄`;
       const activeFilterCount = [
+        state.filter.month !== today().slice(0, 7),
         state.filter.search.trim(),
         state.filter.type !== "all",
         state.filter.settled !== "all"
@@ -1535,7 +1536,8 @@
     }
 
     function resetRecordFilters({ collapse = true, rerender = false } = {}) {
-      state.filter = { search: "", type: "all", settled: "all" };
+      state.filter = { month: today().slice(0, 7), search: "", type: "all", settled: "all" };
+      $("filter-month").value = state.filter.month;
       $("filter-search").value = "";
       $("filter-type").value = "all";
       $("filter-settled").value = "all";
@@ -1805,8 +1807,13 @@
     function setMonth(month) {
       if (!month) return;
       state.month = month;
-      localStorage.setItem("ledger_selected_month", month);
       renderAll();
+    }
+
+    function setRecordFilterMonth(month) {
+      if (!month) return;
+      state.filter.month = month;
+      renderRecords();
     }
 
     function openRecordModal(record = null, copy = false) {
@@ -2594,7 +2601,7 @@
         resetRecordFilters({ collapse: false, rerender: true });
       });
       $("home-month").addEventListener("change", event => setMonth(event.target.value));
-      $("filter-month").addEventListener("change", event => setMonth(event.target.value));
+      $("filter-month").addEventListener("change", event => setRecordFilterMonth(event.target.value));
       $("filter-search").addEventListener("input", event => {
         state.filter.search = event.target.value;
         renderRecords();
