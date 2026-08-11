@@ -1836,6 +1836,8 @@
     function setView(view) {
       const leavingRecords = state.view === "records" && view !== "records";
       if (leavingRecords) resetRecordFilters();
+      const leavingCharts = state.view === "charts" && view !== "charts";
+      if (leavingCharts) resetAnalysisMonth();
       state.view = view;
       $("account-switcher").classList.toggle("hidden", view === "home" || view === "settings");
       document.querySelectorAll(".view").forEach(section => section.classList.toggle("active", section.dataset.viewSection === view));
@@ -1875,6 +1877,11 @@
       if (!month) return;
       state.analysisMonth = month;
       renderCharts();
+    }
+
+    function resetAnalysisMonth() {
+      state.analysisMonth = today().slice(0, 7);
+      $("analysis-month").value = state.analysisMonth;
     }
 
     function openRecordModal(record = null, copy = false) {
