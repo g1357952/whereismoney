@@ -380,9 +380,12 @@
         </div>
 
         <section id="records-filters" class="app-card mb-4 hidden min-w-0 max-w-full rounded-3xl p-4">
-          <div class="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div class="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <input id="filter-search" class="field lg:col-span-2" type="search" placeholder="搜尋品項、分類或商店">
             <input id="filter-month" class="field" type="month">
+            <select id="filter-category" class="field">
+              <option value="all">全部分類</option>
+            </select>
             <select id="filter-type" class="field">
               <option value="all">全部收支</option>
               <option value="expense">只看支出</option>
@@ -401,15 +404,21 @@
       </section>
 
       <section id="view-charts" class="view" data-view-section="charts">
-        <div class="mb-5">
-          <h2 class="text-xl font-black">消費分析</h2>
-          <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">依目前帳本與月份計算</p>
+        <div class="mb-5 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div class="min-w-0">
+            <h2 class="text-xl font-black">消費分析</h2>
+            <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">選擇月份查看圓餅圖、趨勢與摘要</p>
+          </div>
+          <label class="block min-w-0 sm:w-[168px]">
+            <span class="mb-1.5 block text-xs font-bold text-zinc-500 dark:text-zinc-400">分析月份</span>
+            <input id="analysis-month" class="field !py-2 text-sm font-bold" type="month">
+          </label>
         </div>
         <div class="grid gap-4 lg:grid-cols-2">
           <section class="app-card rounded-3xl p-5">
             <div class="mb-5">
               <h3 class="font-black">支出分類</h3>
-              <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">本月各分類占比</p>
+              <p id="category-month-label" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">本月各分類占比</p>
             </div>
             <div class="relative mx-auto h-[280px] max-w-md">
               <canvas id="category-chart"></canvas>
@@ -418,7 +427,7 @@
           <section class="app-card rounded-3xl p-5">
             <div class="mb-5">
               <h3 class="font-black">近六個月趨勢</h3>
-              <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">收入與支出變化</p>
+              <p id="trend-month-label" class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">收入與支出變化</p>
             </div>
             <div class="relative h-[280px]">
               <canvas id="trend-chart"></canvas>
@@ -427,7 +436,7 @@
           <section class="app-card rounded-3xl p-5 lg:col-span-2">
             <div class="mb-4 flex items-center justify-between">
               <div>
-                <h3 class="font-black">本月摘要</h3>
+                <h3 class="font-black">所選月份摘要</h3>
                 <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">自動整理值得注意的數字</p>
               </div>
               <span class="text-xl">✨</span>
@@ -852,11 +861,12 @@
       account: localStorage.getItem("ledger_active_account") || "living",
       view: "home",
       month: today().slice(0, 7),
+      analysisMonth: today().slice(0, 7),
       syncCode: normalizeCode(localStorage.getItem("ledger_sync_code") || "LOVERABBIT2026"),
       user: localStorage.getItem("ledger_user_name") || "Momo",
       partner: localStorage.getItem("ledger_partner_name") || "Way",
       records: [],
-      filter: { month: today().slice(0, 7), search: "", type: "all", settled: "all" },
+      filter: { month: today().slice(0, 7), search: "", category: "all", type: "all", settled: "all" },
       formAccount: "living",
       formType: "expense",
       pendingImageFiles: [],
@@ -1523,25 +1533,49 @@
       }
     }
 
+    function availableFilterCategories() {
+      const types = state.filter.type === "all" ? ["expense", "income"] : [state.filter.type];
+      const known = new Set(types.flatMap(type => DEFAULT_CATEGORIES[state.account][type]));
+      state.records
+        .filter(record => record.account === state.account && types.includes(record.type))
+        .forEach(record => known.add(record.category));
+      return [...known];
+    }
+
+    function renderFilterCategoryOptions() {
+      const categories = availableFilterCategories();
+      if (state.filter.category !== "all" && !categories.includes(state.filter.category)) {
+        state.filter.category = "all";
+      }
+      $("filter-category").innerHTML = [
+        '<option value="all">全部分類</option>',
+        ...categories.map(category => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`)
+      ].join("");
+      $("filter-category").value = state.filter.category;
+    }
+
     function filteredRecords() {
       const search = state.filter.search.trim().toLowerCase();
       return recordsForMonth(state.account, state.filter.month).filter(record => {
+        const matchesCategory = state.filter.category === "all" || record.category === state.filter.category;
         const matchesType = state.filter.type === "all" || record.type === state.filter.type;
         const matchesSettled = state.filter.settled === "all"
           || (state.filter.settled === "settled" && record.isSettled)
           || (state.filter.settled === "unsettled" && !record.isSettled && record.type === "expense");
         const haystack = [record.title, record.category, record.payer, record.channel, record.note].join(" ").toLowerCase();
-        return matchesType && matchesSettled && (!search || haystack.includes(search));
+        return matchesCategory && matchesType && matchesSettled && (!search || haystack.includes(search));
       }).sort(sortRecords);
     }
 
     function renderRecords() {
+      renderFilterCategoryOptions();
       const records = filteredRecords();
       $("filter-month").value = state.filter.month;
       $("record-count-label").textContent = `${monthLabel(state.filter.month)}・${records.length} 筆紀錄`;
       const activeFilterCount = [
         state.filter.month !== today().slice(0, 7),
         state.filter.search.trim(),
+        state.filter.category !== "all",
         state.filter.type !== "all",
         state.filter.settled !== "all"
       ].filter(Boolean).length;
@@ -1553,9 +1587,10 @@
     }
 
     function resetRecordFilters({ collapse = true, rerender = false } = {}) {
-      state.filter = { month: today().slice(0, 7), search: "", type: "all", settled: "all" };
+      state.filter = { month: today().slice(0, 7), search: "", category: "all", type: "all", settled: "all" };
       $("filter-month").value = state.filter.month;
       $("filter-search").value = "";
+      $("filter-category").value = "all";
       $("filter-type").value = "all";
       $("filter-settled").value = "all";
       if (collapse) {
@@ -1611,11 +1646,14 @@
 
     function renderCharts() {
       if (typeof Chart === "undefined") return;
+      $("analysis-month").value = state.analysisMonth;
+      $("category-month-label").textContent = `${monthLabel(state.analysisMonth)}各分類占比`;
+      $("trend-month-label").textContent = `截至 ${monthLabel(state.analysisMonth)}的收入與支出變化`;
       const isDark = document.documentElement.classList.contains("dark");
       const textColor = isDark ? "#a1a1aa" : "#71717a";
       const gridColor = isDark ? "rgba(63,63,70,.5)" : "rgba(228,228,231,.7)";
       const accent = state.account === "rabbit" ? "#f97316" : "#0ea5e9";
-      const expenseRecords = recordsForMonth().filter(record => record.type === "expense");
+      const expenseRecords = recordsForMonth(state.account, state.analysisMonth).filter(record => record.type === "expense");
       const category = topCategory(expenseRecords);
       const categoryEntries = Object.entries(category.groups).sort((a, b) => b[1] - a[1]);
 
@@ -1643,7 +1681,7 @@
       });
 
       const months = [];
-      const date = new Date(`${state.month}-01T00:00:00`);
+      const date = new Date(`${state.analysisMonth}-01T00:00:00`);
       for (let index = 5; index >= 0; index--) {
         const item = new Date(date.getFullYear(), date.getMonth() - index, 1);
         months.push(`${item.getFullYear()}-${String(item.getMonth() + 1).padStart(2, "0")}`);
@@ -1673,11 +1711,11 @@
         }
       });
 
-      const totals = summary(recordsForMonth());
+      const totals = summary(recordsForMonth(state.account, state.analysisMonth));
       const unsettledRatio = totals.expense ? Math.round(totals.unsettled / totals.expense * 100) : 0;
       $("insight-cards").innerHTML = [
-        ["本月最大分類", category.name, money(category.amount), "fa-crown", "text-amber-500"],
-        ["平均每日支出", money(totals.expense / Math.max(1, new Date(Number(state.month.slice(0, 4)), Number(state.month.slice(5)), 0).getDate())), "以整月天數計算", "fa-calendar-day", "text-sky-500"],
+        ["最大分類", category.name, money(category.amount), "fa-crown", "text-amber-500"],
+        ["平均每日支出", money(totals.expense / Math.max(1, new Date(Number(state.analysisMonth.slice(0, 4)), Number(state.analysisMonth.slice(5)), 0).getDate())), "以整月天數計算", "fa-calendar-day", "text-sky-500"],
         ["未結清占支出", `${unsettledRatio}%`, `${money(totals.unsettled)} 尚待結清`, "fa-handshake", "text-orange-500"]
       ].map(item => `<div class="rounded-2xl bg-zinc-50 p-4 dark:bg-zinc-800/70">
         <i class="fa-solid ${item[3]} ${item[4]}"></i>
@@ -1831,6 +1869,12 @@
       if (!month) return;
       state.filter.month = month;
       renderRecords();
+    }
+
+    function setAnalysisMonth(month) {
+      if (!month) return;
+      state.analysisMonth = month;
+      renderCharts();
     }
 
     function openRecordModal(record = null, copy = false) {
@@ -2624,12 +2668,17 @@
       });
       $("home-month").addEventListener("change", event => setMonth(event.target.value));
       $("filter-month").addEventListener("change", event => setRecordFilterMonth(event.target.value));
+      $("analysis-month").addEventListener("change", event => setAnalysisMonth(event.target.value));
       $("filter-search").addEventListener("input", event => {
         state.filter.search = event.target.value;
         renderRecords();
       });
       $("filter-type").addEventListener("change", event => {
         state.filter.type = event.target.value;
+        renderRecords();
+      });
+      $("filter-category").addEventListener("change", event => {
+        state.filter.category = event.target.value;
         renderRecords();
       });
       $("filter-settled").addEventListener("change", event => {
