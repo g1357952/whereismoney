@@ -532,6 +532,20 @@
                     </div>
                   </div>
                 </div>
+                <div class="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900/60 dark:bg-amber-950/20 lg:col-span-2">
+                  <div class="flex items-start gap-3">
+                    <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400"><i class="fa-solid fa-arrows-rotate"></i></span>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-sm font-black">結清狀態同步修復</p>
+                      <p id="sync-repair-summary" class="mt-1 text-[11px] leading-5 text-zinc-500 dark:text-zinc-400">正在整理這台裝置的待結清資料</p>
+                    </div>
+                  </div>
+                  <div class="mt-4 grid gap-2 sm:grid-cols-2">
+                    <button id="repair-use-device" class="rounded-xl bg-amber-500 px-4 py-3 text-xs font-black text-white shadow-sm"><i class="fa-solid fa-mobile-screen-button mr-2"></i>以這台裝置為準</button>
+                    <button id="repair-use-cloud" class="rounded-xl border border-amber-200 bg-white px-4 py-3 text-xs font-black text-amber-700 dark:border-amber-900/60 dark:bg-zinc-900 dark:text-amber-300"><i class="fa-solid fa-cloud-arrow-down mr-2"></i>以雲端資料為準</button>
+                  </div>
+                  <p class="mt-3 text-[10px] leading-5 text-zinc-500 dark:text-zinc-400">只在兩台裝置的結清狀態不一致時使用；不會修改金額、品項、日期或收據。</p>
+                </div>
               </div>
             </details>
           </section>
@@ -822,6 +836,7 @@
     const DEFAULT_SUPABASE_URL = "https://vtssfibzytimziimvqjk.supabase.co";
     const DEFAULT_SUPABASE_KEY = "sb_publishable_7tQeQ9zXiTUq5wwvddSSkA_v9ZGuol1";
     const PRODUCTION_URL = "https://g1357952.github.io/whereismoney/";
+    const SYNC_REPAIR_VERSION = "settlement-20260817-v1";
     const CURRENCY = new Intl.NumberFormat("zh-TW", {
       style: "currency",
       currency: "TWD",
@@ -869,6 +884,7 @@
       user: localStorage.getItem("ledger_user_name") || "Momo",
       partner: localStorage.getItem("ledger_partner_name") || "Way",
       records: [],
+      repairSnapshot: [],
       filter: { month: today().slice(0, 7), search: "", category: "all", payer: "all", type: "all", settled: "all" },
       formAccount: "living",
       formType: "expense",
@@ -881,7 +897,12 @@
         householdId: localStorage.getItem("ledger_household_id") || "",
         householdName: "",
         members: [],
-        channel: null
+        channel: null,
+        channelStatus: "CLOSED",
+        lastError: "",
+        flushPromise: null,
+        refreshPromise: null,
+        lastForegroundSync: 0
       },
       householdMode: "create",
       detailRecordId: "",
@@ -1143,13 +1164,41 @@
         channel: normalized.channel,
         note: normalized.note,
         is_settled: normalized.isSettled,
-        created_by: isUuid(normalized.createdBy) ? normalized.createdBy : (sessionUser?.id || null),
+        // Upsert 會先通過 INSERT RLS；提案列的建立者必須是目前登入者。
+        // 已存在的列會由資料庫 trigger 保留原始 created_by / created_at。
+        created_by: sessionUser?.id || null,
         created_by_label: normalized.createdByLabel || (!isUuid(normalized.createdBy) ? normalized.createdBy : "") || state.user,
         updated_by: sessionUser?.id || null,
         updated_by_label: state.user,
         created_at: new Date(normalized.createdAt).toISOString(),
         updated_at: new Date(normalized.updatedAt).toISOString()
       };
+    }
+
+    function recordToUpdateRow(record) {
+      const row = recordToRow(record);
+      delete row.household_id;
+      delete row.id;
+      delete row.created_by;
+      delete row.created_by_label;
+      delete row.created_at;
+      return row;
+    }
+
+    async function syncSetOperation(operation) {
+      const client = state.supabase.client;
+      const updateResult = await client
+        .from("records")
+        .update(recordToUpdateRow(operation.record))
+        .eq("household_id", state.supabase.householdId)
+        .eq("id", operation.id)
+        .select("id")
+        .maybeSingle();
+      if (updateResult.error) throw updateResult.error;
+      if (updateResult.data) return updateResult;
+      const insertResult = await client.from("records").insert(recordToRow(operation.record));
+      if (insertResult.error) throw insertResult.error;
+      return insertResult;
     }
 
     function rowToRecord(row) {
@@ -1275,8 +1324,14 @@
     async function openSupabaseSync() {
       if (!state.supabase.client || !state.supabase.householdId) return;
       stopRealtime();
-      await flushOutbox();
       await reloadSupabaseRecords();
+      const repairChosen = localStorage.getItem("ledger_sync_repair_version") === SYNC_REPAIR_VERSION;
+      if (repairChosen) {
+        await flushOutbox();
+        if (!getOutbox().length) await reloadSupabaseRecords({ mergePending: false });
+      } else {
+        refreshSyncStatus();
+      }
       state.supabase.channel = state.supabase.client
         .channel(`records-${state.supabase.householdId}`)
         .on(
@@ -1289,9 +1344,13 @@
           },
           () => reloadSupabaseRecords()
         )
-        .subscribe(status => {
+        .subscribe(async status => {
+          state.supabase.channelStatus = status;
           if (status === "SUBSCRIBED") {
-            setSyncStatus("synced", `已同步・${state.supabase.householdName}`);
+            await reloadSupabaseRecords();
+          } else if (["CHANNEL_ERROR", "TIMED_OUT"].includes(status)) {
+            state.supabase.lastError = "即時連線中斷，將在回到前景時重試";
+            refreshSyncStatus();
           }
         });
     }
@@ -1301,9 +1360,10 @@
         state.supabase.client.removeChannel(state.supabase.channel);
       }
       state.supabase.channel = null;
+      state.supabase.channelStatus = "CLOSED";
     }
 
-    async function reloadSupabaseRecords() {
+    async function reloadSupabaseRecords({ mergePending = true } = {}) {
       if (!state.supabase.client || !state.supabase.householdId) return;
       const [recordsResult, imagesResult] = await Promise.all([
         state.supabase.client
@@ -1318,8 +1378,9 @@
           .eq("household_id", state.supabase.householdId)
       ]);
       if (recordsResult.error) {
-        setSyncStatus("error", supabaseErrorText(recordsResult.error));
-        return;
+        state.supabase.lastError = supabaseErrorText(recordsResult.error);
+        refreshSyncStatus();
+        return false;
       }
       const imagesByRecord = new Map();
       (imagesResult.data || []).forEach(image => {
@@ -1330,10 +1391,12 @@
         ...rowToRecord(row),
         imagePaths: imagesByRecord.get(row.id) || []
       }));
-      state.records = pendingMerged(records).sort(sortRecords);
+      state.records = (mergePending ? pendingMerged(records) : records).sort(sortRecords);
       saveCachedRecords();
       renderAll();
-      setSyncStatus("synced", `已同步・${state.supabase.householdName}`);
+      if (!getOutbox().length) state.supabase.lastError = "";
+      refreshSyncStatus();
+      return true;
     }
 
     async function signInWithGoogle() {
@@ -1369,33 +1432,190 @@
     }
 
     async function flushOutbox() {
-      if (!state.supabase.client || !state.supabase.session || !state.supabase.householdId) return;
-      const operations = getOutbox();
-      if (!operations.length) return;
-      const remaining = [];
-      for (const operation of operations) {
-        try {
-          let result;
-          if (operation.type === "delete") {
-            result = await state.supabase.client
-              .from("records")
-              .delete()
-              .eq("household_id", state.supabase.householdId)
-              .eq("id", operation.id);
-          } else {
-            result = await state.supabase.client
-              .from("records")
-              .upsert(recordToRow(operation.record), { onConflict: "household_id,id" });
-          }
-          if (result.error) throw result.error;
-        } catch (error) {
-          remaining.push(operation);
-          console.error("Queued Supabase sync failed:", error);
-        }
+      if (!state.supabase.client || !state.supabase.session || !state.supabase.householdId) return false;
+      if (localStorage.getItem("ledger_sync_repair_version") !== SYNC_REPAIR_VERSION) {
+        refreshSyncStatus();
+        return false;
       }
-      setOutbox(remaining);
-      if (remaining.length) setSyncStatus("syncing", `${remaining.length} 筆等待同步`);
-      await uploadReceiptOutbox();
+      if (state.supabase.flushPromise) return state.supabase.flushPromise;
+      state.supabase.flushPromise = (async () => {
+        const operations = getOutbox();
+        if (!operations.length) {
+          refreshSyncStatus();
+          await uploadReceiptOutbox();
+          return !getImageOutbox().length;
+        }
+        setSyncStatus("syncing", `${operations.length} 筆正在同步`);
+        const remaining = [];
+        let firstError = "";
+        for (const operation of operations) {
+          try {
+            let result;
+            if (operation.type === "delete") {
+              result = await state.supabase.client
+                .from("records")
+                .delete()
+                .eq("household_id", state.supabase.householdId)
+                .eq("id", operation.id);
+              if (result.error) throw result.error;
+            } else {
+              await syncSetOperation(operation);
+            }
+          } catch (error) {
+            remaining.push(operation);
+            firstError ||= supabaseErrorText(error);
+            console.error("Queued Supabase sync failed:", error);
+          }
+        }
+        setOutbox(remaining);
+        state.supabase.lastError = firstError;
+        await uploadReceiptOutbox();
+        refreshSyncStatus();
+        return !remaining.length && !getImageOutbox().length;
+      })();
+      try {
+        return await state.supabase.flushPromise;
+      } finally {
+        state.supabase.flushPromise = null;
+      }
+    }
+
+    function refreshSyncStatus() {
+      if (!state.supabase.session) {
+        setSyncStatus("local", "等待 Google 登入");
+        return;
+      }
+      if (localStorage.getItem("ledger_sync_repair_version") !== SYNC_REPAIR_VERSION) {
+        setSyncStatus("syncing", "請確認結清同步來源");
+        return;
+      }
+      const pending = getOutbox().length + getImageOutbox().length;
+      if (state.supabase.lastError) {
+        setSyncStatus("error", pending ? `${pending} 筆同步失敗・點此查看` : state.supabase.lastError);
+        return;
+      }
+      if (pending) {
+        setSyncStatus("syncing", `${pending} 筆等待同步`);
+        return;
+      }
+      if (state.supabase.channelStatus !== "SUBSCRIBED") {
+        setSyncStatus("syncing", "正在建立即時同步");
+        return;
+      }
+      setSyncStatus("synced", `已同步・${state.supabase.householdName}`);
+    }
+
+    function syncRepairSource() {
+      return state.repairSnapshot.length ? state.repairSnapshot : state.records;
+    }
+
+    function syncRepairLivingSummary() {
+      const month = today().slice(0, 7);
+      return summary(syncRepairSource().filter(record => record.account === "living" && record.date.startsWith(month)));
+    }
+
+    function sameRecordApartFromSettlement(a, b) {
+      const fields = ["account", "type", "title", "amount", "date", "category", "payer", "payMethod", "channel", "note"];
+      return fields.every(field => String(a?.[field] ?? "") === String(b?.[field] ?? ""));
+    }
+
+    async function repairUseDeviceData() {
+      if (!state.supabase.client || !state.supabase.session || !state.supabase.householdId) {
+        showToast("請先完成 Google 登入與共同帳本連線");
+        return;
+      }
+      const source = syncRepairSource().map(record => normalizeRecord(record));
+      const totals = summary(source.filter(record => record.account === "living" && record.date.startsWith(today().slice(0, 7))));
+      const accepted = await confirmAction(
+        "以這台裝置為準？",
+        `將以這台裝置目前的生活帳 ${totals.unsettledCount} 筆、${money(totals.unsettled)} 待結清狀態寫入雲端；金額、品項與收據不會改變。`
+      );
+      if (!accepted) return;
+      try {
+        setSyncStatus("syncing", "正在校正雲端結清狀態");
+        await reloadSupabaseRecords({ mergePending: false });
+        const cloudById = new Map(state.records.map(record => [record.id, record]));
+        const settlementOnlyIds = new Set(
+          getOutbox()
+            .filter(operation => operation.type === "set" && cloudById.has(operation.id) && sameRecordApartFromSettlement(operation.record, cloudById.get(operation.id)))
+            .map(operation => operation.id)
+        );
+        setOutbox(getOutbox().filter(operation => !settlementOnlyIds.has(operation.id)));
+
+        const expenses = source.filter(record => record.type === "expense" && cloudById.has(record.id));
+        for (let index = 0; index < expenses.length; index += 10) {
+          const batch = expenses.slice(index, index + 10);
+          const results = await Promise.all(batch.map(record => state.supabase.client
+            .from("records")
+            .update({
+              is_settled: record.payer === "共同分攤" ? true : record.isSettled,
+              updated_by: state.supabase.session.user.id,
+              updated_by_label: state.user,
+              updated_at: new Date().toISOString()
+            })
+            .eq("household_id", state.supabase.householdId)
+            .eq("id", record.id)
+            .select("id")
+          ));
+          const failed = results.find(result => result.error || !result.data?.length);
+          if (failed) throw failed.error || new Error("有紀錄未能寫入雲端");
+        }
+        localStorage.setItem("ledger_sync_repair_version", SYNC_REPAIR_VERSION);
+        state.supabase.lastError = "";
+        await flushOutbox();
+        await reloadSupabaseRecords({ mergePending: false });
+        state.repairSnapshot = state.records.map(record => ({ ...record }));
+        renderSettings();
+        showToast(`修復完成・目前 ${totals.unsettledCount} 筆待結清`);
+      } catch (error) {
+        localStorage.removeItem("ledger_sync_repair_version");
+        state.supabase.lastError = supabaseErrorText(error);
+        refreshSyncStatus();
+        showToast(state.supabase.lastError);
+      }
+    }
+
+    async function repairUseCloudData() {
+      if (!state.supabase.client || !state.supabase.session || !state.supabase.householdId) {
+        showToast("請先完成 Google 登入與共同帳本連線");
+        return;
+      }
+      const accepted = await confirmAction(
+        "以雲端資料為準？",
+        "這台裝置尚未成功上傳的舊結清變更會被捨棄，並重新下載共同帳本；金額、品項與收據不會刪除。"
+      );
+      if (!accepted) return;
+      setOutbox([]);
+      localStorage.setItem("ledger_sync_repair_version", SYNC_REPAIR_VERSION);
+      state.supabase.lastError = "";
+      const loaded = await reloadSupabaseRecords({ mergePending: false });
+      if (!loaded) {
+        localStorage.removeItem("ledger_sync_repair_version");
+        return;
+      }
+      state.repairSnapshot = state.records.map(record => ({ ...record }));
+      renderSettings();
+      showToast("已重新下載雲端結清狀態");
+    }
+
+    async function refreshSupabaseNow({ force = false } = {}) {
+      if (!state.supabase.client || !state.supabase.session || !state.supabase.householdId || !navigator.onLine) return false;
+      const now = Date.now();
+      if (!force && now - state.supabase.lastForegroundSync < 1500) return false;
+      if (state.supabase.refreshPromise) return state.supabase.refreshPromise;
+      state.supabase.lastForegroundSync = now;
+      state.supabase.refreshPromise = (async () => {
+        const repairChosen = localStorage.getItem("ledger_sync_repair_version") === SYNC_REPAIR_VERSION;
+        if (repairChosen) await flushOutbox();
+        const loaded = await reloadSupabaseRecords({ mergePending: repairChosen });
+        refreshSyncStatus();
+        return loaded;
+      })();
+      try {
+        return await state.supabase.refreshPromise;
+      } finally {
+        state.supabase.refreshPromise = null;
+      }
     }
 
     function setSyncStatus(type, text) {
@@ -1750,6 +1970,8 @@
       $("setting-sync-code").value = state.syncCode;
       $("setting-supabase-url").value = localStorage.getItem("custom_supabase_url") || DEFAULT_SUPABASE_URL;
       $("setting-supabase-key").value = localStorage.getItem("custom_supabase_key") || DEFAULT_SUPABASE_KEY;
+      const repairTotals = syncRepairLivingSummary();
+      $("sync-repair-summary").textContent = `這台裝置本月生活帳：${repairTotals.unsettledCount} 筆待結清・${money(repairTotals.unsettled)}`;
       renderAuthState();
     }
 
@@ -1771,6 +1993,10 @@
             : "尚未連接 Supabase";
       $("google-login").classList.toggle("hidden", Boolean(session));
       $("google-logout").classList.toggle("hidden", !session);
+      $("repair-use-device").disabled = !state.supabase.householdId;
+      $("repair-use-cloud").disabled = !state.supabase.householdId;
+      $("repair-use-device").classList.toggle("opacity-50", !state.supabase.householdId);
+      $("repair-use-cloud").classList.toggle("opacity-50", !state.supabase.householdId);
     }
 
     function showHouseholdModal(mode = "create") {
@@ -2032,6 +2258,7 @@
     function renderRecordDetail(record) {
       const isRabbit = record.account === "rabbit";
       const isExpense = record.type === "expense";
+      const canSettle = isExpense && record.payer !== "共同分攤";
       const imageCount = (record.images?.length || 0) + (record.imagePaths?.length || 0);
       $("detail-account").textContent = isRabbit ? "🐰 起粑開銷" : "🏠 生活開銷";
       $("detail-account").className = `text-xs font-black ${isRabbit ? "text-orange-500" : "text-sky-500"}`;
@@ -2039,8 +2266,12 @@
       $("detail-type").textContent = isExpense ? "支出" : "收入";
       $("detail-amount").textContent = `${isExpense ? "−" : "+"}${money(record.amount)}`;
       $("detail-amount").className = `mt-1 text-3xl font-black ${isExpense ? "text-zinc-900 dark:text-white" : "text-emerald-600 dark:text-emerald-400"}`;
-      $("detail-status").textContent = isExpense ? (record.isSettled ? "✅ 已結清" : "⏳ 未結清") : "收入紀錄";
-      $("detail-status").className = `mt-2 text-xs font-black ${!isExpense || record.isSettled ? "text-emerald-500" : "text-amber-500"}`;
+      $("detail-status").textContent = !isExpense
+        ? "收入紀錄"
+        : !canSettle
+          ? "共同分攤・無需結清"
+          : record.isSettled ? "✅ 已結清" : "⏳ 未結清";
+      $("detail-status").className = `mt-2 text-xs font-black ${!canSettle || record.isSettled ? "text-emerald-500" : "text-amber-500"}`;
       $("detail-content").innerHTML = [
         detailRow("日期", record.date),
         detailRow("分類", record.category),
@@ -2055,14 +2286,14 @@
       $("detail-photos").classList.toggle("flex", Boolean(imageCount));
       $("detail-photo-label").textContent = `查看收據照片（${imageCount}）`;
 
-      $("detail-settled").disabled = !isExpense;
-      $("detail-settled").className = isExpense
+      $("detail-settled").disabled = !canSettle;
+      $("detail-settled").className = canSettle
         ? `flex min-h-16 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-3 text-xs font-black ${record.isSettled ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400"}`
         : "flex min-h-16 cursor-not-allowed flex-col items-center justify-center gap-1 rounded-2xl bg-zinc-100 px-2 py-3 text-xs font-black text-zinc-400 opacity-60 dark:bg-zinc-800";
-      $("detail-settled-icon").className = isExpense && record.isSettled
+      $("detail-settled-icon").className = canSettle && record.isSettled
         ? "fa-solid fa-square-check text-base"
         : "fa-regular fa-square text-base";
-      $("detail-settled-label").textContent = isExpense ? (record.isSettled ? "已結清" : "尚未結清") : "無需結清";
+      $("detail-settled-label").textContent = canSettle ? (record.isSettled ? "已結清" : "尚未結清") : "無需結清";
     }
 
     function openRecordDetails(record) {
@@ -2084,14 +2315,17 @@
 
     async function toggleDetailSettlement() {
       const record = currentDetailRecord();
-      if (!record || record.type !== "expense") return;
+      if (!record || record.type !== "expense" || record.payer === "共同分攤") return;
       record.isSettled = !record.isSettled;
       record.updatedAt = Date.now();
       upsertLocal(record);
       renderRecordDetail(record);
       queueOperation({ type: "set", id: record.id, record });
-      showToast(record.isSettled ? "已標記為結清" : "已改為未結清");
-      flushOutbox();
+      const synced = await flushOutbox();
+      if (synced) await reloadSupabaseRecords({ mergePending: false });
+      showToast(synced
+        ? (record.isSettled ? "已標記為結清並同步" : "已改為未結清並同步")
+        : "已暫存在這台裝置・等待同步");
     }
 
     async function deleteRecord(record) {
@@ -2734,6 +2968,8 @@
       });
       $("save-sync-code").addEventListener("click", applySyncCode);
       $("save-supabase").addEventListener("click", saveSupabaseSettings);
+      $("repair-use-device").addEventListener("click", repairUseDeviceData);
+      $("repair-use-cloud").addEventListener("click", repairUseCloudData);
       $("open-supabase-docs").addEventListener("click", openSetupGuide);
       $("close-setup-guide").addEventListener("click", () => {
         $("setup-guide-modal").classList.add("hidden");
@@ -2812,10 +3048,15 @@
       addEventListener("online", () => {
         if (state.supabase.ready) {
           setSyncStatus("syncing", "網路已恢復・正在同步");
-          flushOutbox();
+          refreshSupabaseNow({ force: true });
         }
       });
       addEventListener("offline", () => setSyncStatus("syncing", "目前離線・資料已暫存"));
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) refreshSupabaseNow();
+      });
+      addEventListener("pageshow", () => refreshSupabaseNow());
+      addEventListener("focus", () => refreshSupabaseNow());
       addEventListener("keydown", event => {
         if (event.key === "Escape") {
           closeReceiptViewer();
@@ -2834,6 +3075,7 @@
     function init() {
       generateIcon();
       loadCachedRecords();
+      state.repairSnapshot = state.records.map(record => ({ ...record }));
       bindEvents();
       renderAll();
       setView("home");
